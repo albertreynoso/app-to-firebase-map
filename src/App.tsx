@@ -10,6 +10,7 @@ import Pacientes from "./pages/Pacientes";
 import Calendario from "./pages/Calendario";
 import Pagos from "./pages/Pagos";
 import NotFound from "./pages/NotFound";
+import PacienteDetalle from "./components/PatientDetail";
 
 const queryClient = new QueryClient();
 
@@ -24,6 +25,7 @@ const App = () => (
             <Route path="/" element={<Dashboard />} />
             <Route path="/empleados" element={<Empleados />} />
             <Route path="/pacientes" element={<Pacientes />} />
+            <Route path="/pacientes/:id" element={<PacienteDetalle/>} />
             <Route path="/calendario" element={<Calendario />} />
             <Route path="/pagos" element={<Pagos />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
