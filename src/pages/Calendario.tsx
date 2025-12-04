@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import GoogleCalendarView from "@/components/GoogleCalendarView";
 import {
   Plus,
   ChevronLeft,
@@ -271,7 +272,19 @@ export default function Calendario() {
   const completedAppointments = appointments.filter(apt => apt.status === 'completed');
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="space-y-6 p-6 h-screen flex flex-col">
+      {/* Vista de Calendario tipo Google Calendar */}
+      <div className="flex-1 overflow-hidden">
+        <GoogleCalendarView 
+          appointments={filteredAppointments}
+          onSlotClick={handleSlotClick}
+          onNewAppointment={() => {
+            setSelectedSlot({ date: new Date(), time: "09:00" });
+            setShowAppointmentModal(true);
+          }}
+        />
+      </div>
+
       {/* Header Principal */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
         <div>
