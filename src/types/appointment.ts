@@ -27,6 +27,8 @@ export interface Appointment {
   paciente_nombre: string;
   tipo_consulta: string;
   duracion: string; // Duración estimada
+  costo: number;
+  pagado: boolean; 
   notas_observaciones?: string;
   estado: "confirmada" | "pendiente" | "completada" | "cancelada" | "reprogramada";
   fecha_creacion: Date;

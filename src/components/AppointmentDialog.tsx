@@ -64,15 +64,21 @@ const capitalizeWords = (text: string): string => {
         .join(" ");
 };
 
-// 📋 TIPOS DE CONSULTA
+// 📋 TIPOS DE CONSULTA CON COSTOS
 const CONSULTATION_TYPES = [
-    "Evaluación general",
-    "Evaluación ortodoncia",
-    "Implantes",
-    "Odontopediatría",
-    "Rehabilitación",
-    "Evaluación estética",
+    { type: "Evaluación general", cost: 30 },
+    { type: "Evaluación ortodoncia", cost: 50 },
+    { type: "Implantes", cost: 70 },
+    { type: "Odontopediatría", cost: 50 },
+    { type: "Rehabilitación", cost: 70 },
+    { type: "Evaluación estética", cost: 70 },
 ] as const;
+
+// Función helper para obtener el costo según el tipo de consulta
+const getCostByConsultationType = (consultationType: string): number => {
+    const consultation = CONSULTATION_TYPES.find(c => c.type === consultationType);
+    return consultation?.cost || 0;
+};
 
 // ⏱️ DURACIONES DISPONIBLES
 const DURATIONS = [
@@ -219,7 +225,7 @@ export default function AppointmentDialog({
                 try {
                     // Verificar si fecha existe y tiene el método toDate
                     if (!apt.fecha) return false;
-                    
+
                     let fechaCita: Date;
                     if (typeof apt.fecha.toDate === 'function') {
                         fechaCita = apt.fecha.toDate();
@@ -228,7 +234,7 @@ export default function AppointmentDialog({
                     } else {
                         return false;
                     }
-                    
+
                     return isSameDay(fechaCita, fecha);
                 } catch (error) {
                     console.error("Error procesando fecha de cita:", error);
@@ -242,7 +248,7 @@ export default function AppointmentDialog({
             const citasEnIntervalo = citasDelDia.filter(apt => {
                 try {
                     if (!apt.hora || !apt.duracion) return false;
-                    
+
                     const aptInicio = (parseInt(apt.hora.split(':')[0]) * 60) + parseInt(apt.hora.split(':')[1] || '0');
                     const aptFin = aptInicio + parseInt(apt.duracion);
 
@@ -250,11 +256,11 @@ export default function AppointmentDialog({
                     // - Empieza antes de que termine el intervalo Y
                     // - Termina después de que empiece el intervalo
                     const seSuperpone = aptInicio < horaFin && aptFin > horaInicio;
-                    
+
                     if (seSuperpone) {
                         console.log(`Cita superpuesta: ${apt.hora} - ${apt.duracion} min`);
                     }
-                    
+
                     return seSuperpone;
                 } catch (error) {
                     console.error("Error procesando cita:", error);
@@ -400,6 +406,8 @@ export default function AppointmentDialog({
             const capitalizedPatientName = capitalizeWords(data.patientName);
 
             // ========== CREAR LA CITA ==========
+            const costo = getCostByConsultationType(data.consultation);
+
             const appointmentData = {
                 fecha: data.date,
                 hora: data.time,
@@ -407,6 +415,8 @@ export default function AppointmentDialog({
                 paciente_nombre: capitalizedPatientName,
                 tipo_consulta: data.consultation,
                 duracion: data.duration,
+                costo: costo,
+                pagado: false, 
                 notas_observaciones: data.notes || "",
                 estado: "pendiente" as const,
             };
@@ -516,7 +526,7 @@ export default function AppointmentDialog({
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
-                                        
+
                                         {/* MENSAJE DE ERROR DE DISPONIBILIDAD */}
                                         {!validacion.disponible && (
                                             <div className="mt-2 text-sm text-red-600 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md p-3 flex items-start gap-2">
@@ -673,9 +683,9 @@ export default function AppointmentDialog({
                                             </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>
-                                            {CONSULTATION_TYPES.map((type) => (
-                                                <SelectItem key={type} value={type}>
-                                                    {type}
+                                            {CONSULTATION_TYPES.map((item) => (
+                                                <SelectItem key={item.type} value={item.type}>
+                                                    {item.type} - S/ {item.cost}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
@@ -744,8 +754,8 @@ export default function AppointmentDialog({
                             >
                                 Cancelar
                             </Button>
-                            <Button 
-                                type="submit" 
+                            <Button
+                                type="submit"
                                 disabled={loading || !validacion.disponible}
                             >
                                 {loading ? (

@@ -191,6 +191,8 @@ export const createAppointment = async (
       paciente_nombre: appointmentData.paciente_nombre,
       tipo_consulta: appointmentData.tipo_consulta,
       duracion: appointmentData.duracion,
+      costo: appointmentData.costo || 0,
+      pagado: appointmentData.pagado || false, 
       notas_observaciones: appointmentData.notas_observaciones || "",
       estado: appointmentData.estado,
       fecha_creacion: serverTimestamp(),
@@ -237,6 +239,7 @@ export const updateAppointment = async (
     if (updates.hora !== undefined) updateData.hora = updates.hora;
     if (updates.tipo_consulta !== undefined) updateData.tipo_consulta = updates.tipo_consulta;
     if (updates.duracion !== undefined) updateData.duracion = updates.duracion;
+    if (updates.pagado !== undefined) updateData.pagado = updates.pagado;
     if (updates.estado !== undefined) updateData.estado = updates.estado;
     if (updates.notas_observaciones !== undefined) updateData.notas_observaciones = updates.notas_observaciones;
     if (updates.atendido_por !== undefined) updateData.atendido_por = updates.atendido_por;

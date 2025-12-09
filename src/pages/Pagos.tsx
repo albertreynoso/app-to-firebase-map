@@ -2,11 +2,76 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, TrendingUp, DollarSign, CreditCard, FileText } from "lucide-react";
+import { Plus, Search, TrendingUp, DollarSign, CreditCard, FileText, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { useEffect } from "react";
+import { collection, query, getDocs, orderBy, where } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import PaymentDialog from "@/components/PaymentDialog";
 
 export default function Pagos() {
   const [searchTerm, setSearchTerm] = useState("");
+
+  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
+  const [pagos, setPagos] = useState<any[]>([]);
+  const [loadingPagos, setLoadingPagos] = useState(true);
+
+  const fetchPagos = async () => {
+    try {
+      setLoadingPagos(true);
+      const pagosRef = collection(db, "pagos");
+      const q = query(pagosRef, orderBy("fecha", "desc"));
+      const querySnapshot = await getDocs(q);
+
+      const pagosData: any[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        pagosData.push({
+          id: doc.id,
+          monto: data.monto || 0,
+          metodo_pago: data.metodo_pago || "",
+          fecha: data.fecha?.toDate ? data.fecha.toDate() : new Date(),
+          concepto: data.concepto || "",
+          tipo: data.tipo || "consulta",
+          referencia_id: data.referencia_id || "",
+          referencia_nombre: data.referencia_nombre || "",
+          paciente_id: data.paciente_id || "",
+          paciente_nombre: data.paciente_nombre || "",
+          creado_por: data.creado_por || "",
+          notas: data.notas || "",
+        });
+      });
+
+      setPagos(pagosData);
+    } catch (error) {
+      console.error("Error al cargar pagos:", error);
+    } finally {
+      setLoadingPagos(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPagos();
+  }, []);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const pagosHoy = pagos.filter(p => {
+    const fechaPago = new Date(p.fecha);
+    fechaPago.setHours(0, 0, 0, 0);
+    return fechaPago.getTime() === today.getTime();
+  });
+
+  const pagosMes = pagos.filter(p => {
+    const fechaPago = new Date(p.fecha);
+    return fechaPago.getMonth() === today.getMonth() &&
+      fechaPago.getFullYear() === today.getFullYear();
+  });
+
+  const totalIngresosMes = pagosMes.reduce((sum, p) => sum + p.monto, 0);
+  const totalIngresosHoy = pagosHoy.reduce((sum, p) => sum + p.monto, 0);
+  const cantidadPagosHoy = pagosHoy.length;
 
   const payments = [
     {
@@ -71,11 +136,19 @@ export default function Pagos() {
     },
   ];
 
-  const filteredPayments = payments.filter(
-    (payment) =>
-      payment.patient.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      payment.treatment.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredPayments = pagos.filter(
+    (pago) =>
+      pago.paciente_nombre.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      pago.concepto.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      pago.referencia_nombre.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('es-PE', {
+      style: 'currency',
+      currency: 'PEN',
+    }).format(amount);
+  };
 
   const totalIncome = payments.reduce((sum, p) => sum + p.paid, 0);
   const pendingAmount = payments
@@ -90,21 +163,24 @@ export default function Pagos() {
           <h1 className="text-4xl font-bold text-foreground mb-2">Pagos</h1>
           <p className="text-muted-foreground">Gestión financiera del consultorio</p>
         </div>
-        <Button className="bg-primary hover:bg-primary-hover text-primary-foreground">
+        <Button
+          className="bg-primary hover:bg-primary-hover text-primary-foreground"
+          onClick={() => setIsPaymentDialogOpen(true)}
+        >
           <Plus className="h-4 w-4 mr-2" />
           Registrar Pago
         </Button>
       </div>
 
-      {/* Financial Stats */}
+      {/* Financial Stats - Reemplazar esta sección */}
       <div className="grid gap-6 md:grid-cols-3">
         <Card className="overflow-hidden">
           <CardContent className="p-6">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-muted-foreground font-medium mb-2">Ingresos Totales</p>
-                <p className="text-3xl font-bold text-foreground">${totalIncome.toLocaleString()}</p>
-                <p className="text-sm text-success mt-2">↑ +12% vs mes anterior</p>
+                <p className="text-sm text-muted-foreground font-medium mb-2">Ingresos Totales del Mes</p>
+                <p className="text-3xl font-bold text-foreground">{formatCurrency(totalIngresosMes)}</p>
+                <p className="text-sm text-muted-foreground mt-2">{pagosMes.length} pagos registrados</p>
               </div>
               <div className="bg-primary p-3 rounded-xl">
                 <DollarSign className="h-6 w-6 text-white" />
@@ -117,14 +193,12 @@ export default function Pagos() {
           <CardContent className="p-6">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-muted-foreground font-medium mb-2">Por Cobrar</p>
-                <p className="text-3xl font-bold text-foreground">${pendingAmount.toLocaleString()}</p>
-                <p className="text-sm text-muted-foreground mt-2">
-                  {payments.filter((p) => p.status !== "completed").length} pendientes
-                </p>
+                <p className="text-sm text-muted-foreground font-medium mb-2">Ingresos Totales de Hoy</p>
+                <p className="text-3xl font-bold text-foreground">{formatCurrency(totalIngresosHoy)}</p>
+                <p className="text-sm text-muted-foreground mt-2">{pagosHoy.length} pagos hoy</p>
               </div>
-              <div className="bg-warning p-3 rounded-xl">
-                <CreditCard className="h-6 w-6 text-white" />
+              <div className="bg-primary p-3 rounded-xl">
+                <DollarSign className="h-6 w-6 text-white" />
               </div>
             </div>
           </CardContent>
@@ -134,9 +208,9 @@ export default function Pagos() {
           <CardContent className="p-6">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-sm text-muted-foreground font-medium mb-2">Pagos Completados</p>
-                <p className="text-3xl font-bold text-foreground">{completedPayments}</p>
-                <p className="text-sm text-muted-foreground mt-2">Este mes</p>
+                <p className="text-sm text-muted-foreground font-medium mb-2">Pagos Completados Hoy</p>
+                <p className="text-3xl font-bold text-foreground">{cantidadPagosHoy}</p>
+                <p className="text-sm text-success mt-2">Registros del día</p>
               </div>
               <div className="bg-success p-3 rounded-xl">
                 <TrendingUp className="h-6 w-6 text-white" />
@@ -165,80 +239,83 @@ export default function Pagos() {
             Historial de Pagos
           </CardTitle>
         </CardHeader>
+        {/* Payments List - Reemplazar el contenido del CardContent */}
         <CardContent>
-          <div className="space-y-4">
-            {filteredPayments.map((payment) => (
-              <div
-                key={payment.id}
-                className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
-              >
-                <div className="flex-1">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <h3 className="font-semibold text-foreground">{payment.patient}</h3>
-                    <Badge
-                      variant={
-                        payment.status === "completed"
-                          ? "default"
-                          : payment.status === "partial"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {payment.status === "completed"
-                        ? "Pagado"
-                        : payment.status === "partial"
-                        ? "Parcial"
-                        : "Pendiente"}
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{payment.treatment}</p>
-                  <div className="flex flex-wrap gap-4 mt-2 text-sm">
-                    <span className="text-muted-foreground">Fecha: {payment.date}</span>
-                    <span className="text-muted-foreground">Método: {payment.method}</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-4">
-                  <div className="text-right">
-                    <p className="text-xs text-muted-foreground mb-1">Monto Total</p>
-                    <p className="text-xl font-bold text-foreground">${payment.amount}</p>
-                    {payment.status === "partial" && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Pagado: ${payment.paid} | Resta: ${payment.amount - payment.paid}
+          {loadingPagos ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-sm text-muted-foreground">Cargando pagos...</p>
+            </div>
+          ) : filteredPayments.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
+              <FileText className="h-12 w-12 text-muted-foreground" />
+              <div>
+                <p className="font-semibold text-foreground">No hay pagos registrados</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {searchTerm ? "No se encontraron resultados para tu búsqueda" : "Los pagos aparecerán aquí"}
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {filteredPayments.map((pago) => (
+                <div
+                  key={pago.id}
+                  className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 p-4 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors"
+                >
+                  <div className="flex-1">
+                    <div className="flex flex-wrap items-center gap-2 mb-2">
+                      <h3 className="font-semibold text-foreground">{pago.paciente_nombre}</h3>
+                      <Badge variant="default" className="bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400">
+                        Completado
+                      </Badge>
+                    </div>
+                    <p className="text-sm text-foreground font-medium">{pago.concepto}</p>
+                    <div className="flex flex-wrap gap-4 mt-2 text-sm">
+                      <span className="text-muted-foreground">
+                        Fecha: {pago.fecha.toLocaleDateString('es-PE', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit'
+                        })}
+                      </span>
+                      <span className="text-muted-foreground">Método: {pago.metodo_pago}</span>
+                      {pago.tipo && (
+                        <Badge variant="outline" className="text-xs">
+                          {pago.tipo === "consulta" ? "Consulta" : "Tratamiento"}
+                        </Badge>
+                      )}
+                    </div>
+                    {pago.notas && (
+                      <p className="text-xs text-muted-foreground mt-2 italic">
+                        Nota: {pago.notas}
                       </p>
                     )}
-                    {payment.status === "pending" && (
-                      <p className="text-xs text-destructive mt-1">Sin pagos registrados</p>
-                    )}
                   </div>
-                  <div className="flex gap-2">
+
+                  <div className="flex items-center gap-4">
+                    <div className="text-right">
+                      <p className="text-xs text-muted-foreground mb-1">Monto Pagado</p>
+                      <p className="text-xl font-bold text-green-600">{formatCurrency(pago.monto)}</p>
+                    </div>
                     <Button variant="outline" size="sm">
-                      Ver
+                      Ver Detalles
                     </Button>
-                    {payment.status !== "completed" && (
-                      <Button size="sm" className="bg-primary hover:bg-primary-hover">
-                        Pagar
-                      </Button>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </CardContent>
       </Card>
-
-      {/* Monthly Chart Placeholder */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Ingresos Mensuales</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="h-64 flex items-center justify-center bg-muted/30 rounded-lg">
-            <p className="text-muted-foreground">Gráfico de ingresos mensuales (próximamente)</p>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Payment Dialog */}
+      <PaymentDialog
+        open={isPaymentDialogOpen}
+        onOpenChange={setIsPaymentDialogOpen}
+        onSuccess={() => {
+          fetchPagos();
+        }}
+      />
     </div>
   );
 }

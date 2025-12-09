@@ -24,13 +24,18 @@ import {
   Heart,
   Home,
   Stethoscope,
+  Trash2,
 } from "lucide-react";
 import EditPatientDialog from "./PatientDetailEdit";
-import { doc, getDoc, collection, query, where, getDocs } from "firebase/firestore";
+import { toast } from "@/hooks/use-toast";
+import { doc, getDoc, collection, query, where, getDocs, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Patient } from "@/types/appointment";
 import { getAppointmentsByPatientId } from "@/services/appointmentService";
 import TreatmentDialog from "./TreatmentDialog";
+import TreatmentEditDialog from "./TreatmentEditDialog";
+import ConfirmationDialog from "./ConfirmationDialog";
+import PaymentDialog from "./PaymentDialog";
 
 interface PatientWithStats extends Patient {
   fullName: string;
@@ -45,6 +50,9 @@ interface Treatment {
   cantidad_citas_planificadas: number;
   presupuesto: any[];
   total_presupuesto: number;
+  monto_abonado: number;
+  pago_pendiente: number;
+  pagado: boolean;
   paciente_id: string;
   paciente_nombre: string;
   creador_id: string;
@@ -53,6 +61,20 @@ interface Treatment {
   estado: string;
   fecha_creacion: any;
   fecha_ultima_actualizacion: any;
+}
+
+interface Pago {
+  id: string;
+  monto: number;
+  metodo_pago: string;
+  fecha: any;
+  concepto: string;
+  tipo: 'consulta' | 'tratamiento';
+  referencia_id: string;
+  referencia_nombre: string;
+  paciente_id: string;
+  creado_por: string;
+  notas?: string;
 }
 
 export default function PacienteDetalle() {
@@ -68,6 +90,21 @@ export default function PacienteDetalle() {
   const [loadingTreatments, setLoadingTreatments] = useState(true);
   const [isTreatmentDialogOpen, setIsTreatmentDialogOpen] = useState(false);
   const [viewMode, setViewMode] = useState<"consultas" | "tratamientos">("consultas");
+  //Estados de pago
+  const [pagos, setPagos] = useState<Pago[]>([]);
+  const [loadingPagos, setLoadingPagos] = useState(true);
+
+  //Estados de edicion de tratamiento
+  const [isEditTreatmentDialogOpen, setIsEditTreatmentDialogOpen] = useState(false);
+  const [selectedTreatment, setSelectedTreatment] = useState<Treatment | null>(null);
+
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [treatmentToDelete, setTreatmentToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
+  const [selectedPaymentType, setSelectedPaymentType] = useState<"consulta" | "tratamiento" | undefined>(undefined);
+  const [selectedPaymentReferenceId, setSelectedPaymentReferenceId] = useState<string | undefined>(undefined);
 
   const calculateAge = (fechaNacimiento: Date | undefined): number | null => {
     if (!fechaNacimiento) return null;
@@ -175,6 +212,9 @@ export default function PacienteDetalle() {
           cantidad_citas_planificadas: data.cantidad_citas_planificadas || 0,
           presupuesto: data.presupuesto || [],
           total_presupuesto: data.total_presupuesto || 0,
+          monto_abonado: data.monto_abonado || 0,
+          pago_pendiente: data.pago_pendiente || 0,
+          pagado: data.pagado || false,
           paciente_id: data.paciente_id || "",
           paciente_nombre: data.paciente_nombre || "",
           creador_id: data.creador_id || "",
@@ -195,11 +235,47 @@ export default function PacienteDetalle() {
     }
   };
 
+  const fetchPagos = async () => {
+    if (!id) return;
+    try {
+      setLoadingPagos(true);
+      const pagosRef = collection(db, "pagos");
+      const q = query(pagosRef, where("paciente_id", "==", id));
+      const querySnapshot = await getDocs(q);
+
+      const pagosData: Pago[] = [];
+      querySnapshot.forEach((doc) => {
+        const data = doc.data();
+        pagosData.push({
+          id: doc.id,
+          monto: data.monto || 0,
+          metodo_pago: data.metodo_pago || "",
+          fecha: data.fecha?.toDate ? data.fecha.toDate() : new Date(),
+          concepto: data.concepto || "",
+          tipo: data.tipo || "consulta",
+          referencia_id: data.referencia_id || "",
+          referencia_nombre: data.referencia_nombre || "",
+          paciente_id: data.paciente_id || "",
+          creado_por: data.creado_por || "",
+          notas: data.notas || "",
+        });
+      });
+
+      pagosData.sort((a, b) => b.fecha.getTime() - a.fecha.getTime());
+      setPagos(pagosData);
+    } catch (error) {
+      console.error("Error al cargar pagos:", error);
+    } finally {
+      setLoadingPagos(false);
+    }
+  };
+
   useEffect(() => {
     fetchPatient();
     if (id) {
       fetchAppointments();
       fetchTreatments();
+      fetchPagos();
     }
   }, [id]);
 
@@ -209,6 +285,36 @@ export default function PacienteDetalle() {
 
   const handleTreatmentSuccess = () => {
     fetchTreatments();
+  };
+
+  const handleDeleteTreatment = async () => {
+    if (!treatmentToDelete) return;
+
+    try {
+      setIsDeleting(true);
+      const treatmentRef = doc(db, "tratamientos", treatmentToDelete);
+
+      // Eliminar completamente el documento
+      await deleteDoc(treatmentRef);
+
+      toast({
+        title: "✅ Tratamiento eliminado",
+        description: "El tratamiento ha sido eliminado permanentemente.",
+      });
+
+      fetchTreatments();
+      setIsDeleteDialogOpen(false);
+      setTreatmentToDelete(null);
+    } catch (error) {
+      console.error("Error al eliminar tratamiento:", error);
+      toast({
+        title: "❌ Error",
+        description: "No se pudo eliminar el tratamiento.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const getStatusBadge = (estado: string) => {
@@ -285,23 +391,288 @@ export default function PacienteDetalle() {
     );
   }
 
-  const FinancialTab = () => (
-    <div className="space-y-6">
-      <Card>
-        <CardContent className="p-12">
-          <div className="flex flex-col items-center justify-center gap-4 text-center">
-            <DollarSign className="h-12 w-12 text-muted-foreground" />
-            <div>
-              <p className="font-semibold text-foreground">Información financiera</p>
-              <p className="text-sm text-muted-foreground mt-1">
-                Esta sección estará disponible próximamente
-              </p>
-            </div>
+  const FinancialTab = () => {
+    // Filtrar consultas no pagadas
+    const consultasPendientes = appointments.filter(apt => !apt.pagado && apt.costo > 0);
+
+    // Filtrar tratamientos no pagados completamente
+    const tratamientosPendientes = treatments.filter(t => !t.pagado && t.total_presupuesto > 0);
+
+    // Calcular totales
+    const totalPendienteConsultas = consultasPendientes.reduce((sum, apt) => sum + (apt.costo || 0), 0);
+    const totalPendienteTratamientos = tratamientosPendientes.reduce((sum, t) => sum + t.pago_pendiente, 0);
+    const totalPagadoTratamientos = tratamientosPendientes.reduce((sum, t) => sum + t.monto_abonado, 0);
+    const totalPendiente = totalPendienteConsultas + totalPendienteTratamientos;
+    const totalPagado = totalPagadoTratamientos;
+    const totalGeneral = totalPendiente + totalPagado;
+
+    return (
+      <div className="space-y-6">
+        {/* Resumen financiero */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-yellow-100 dark:bg-yellow-900/20 flex items-center justify-center">
+                  <Clock className="h-5 w-5 text-yellow-600 dark:text-yellow-400" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Pendiente</p>
+                  <p className="text-2xl font-bold text-yellow-600">
+                    {formatCurrency(totalPendiente)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/20 flex items-center justify-center">
+                  <DollarSign className="h-5 w-5 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Pagado</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {formatCurrency(totalPagado)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/20 flex items-center justify-center">
+                  <DollarSign className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Total</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {formatCurrency(totalGeneral)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Contenido principal */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Columna izquierda - Presupuestos y Tratamientos pendientes */}
+          <div className="space-y-4">
+            <Card>
+              <CardHeader className="border-b">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <FileText className="h-5 w-5" />
+                  Presupuestos y Tratamientos
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6 space-y-4">
+                {loadingTreatments || loadingAppointments ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">Cargando información...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Tratamientos pendientes */}
+                    {tratamientosPendientes.length > 0 && (
+                      <div className="space-y-3">
+                        {tratamientosPendientes.map((treatment) => (
+                          <div key={treatment.id} className="border rounded-lg p-4 space-y-3">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1">
+                                <h4 className="font-semibold text-foreground">
+                                  {treatment.tratamiento}
+                                </h4>
+                                <p className="text-xs text-muted-foreground">
+                                  {treatment.diagnostico}
+                                </p>
+                              </div>
+                              <Badge variant="secondary" className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/20 dark:text-yellow-400">
+                                En progreso
+                              </Badge>
+                            </div>
+
+                            <div className="space-y-2 text-sm">
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Total:</span>
+                                <span className="font-semibold text-foreground">
+                                  {formatCurrency(treatment.total_presupuesto)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Pagado:</span>
+                                <span className="font-semibold text-green-600">
+                                  {formatCurrency(treatment.monto_abonado)}
+                                </span>
+                              </div>
+                              <div className="flex justify-between">
+                                <span className="text-muted-foreground">Pendiente:</span>
+                                <span className="font-semibold text-yellow-600">
+                                  {formatCurrency(treatment.pago_pendiente)}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex gap-2 pt-2">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="flex-1"
+                                onClick={() => {
+                                  setSelectedTreatment(treatment);
+                                  setIsEditTreatmentDialogOpen(true);
+                                }}
+                              >
+                                Editar
+                              </Button>
+                              <Button
+                                size="sm"
+                                className="flex-1"
+                                onClick={() => {
+                                  setSelectedPaymentType("tratamiento");
+                                  setSelectedPaymentReferenceId(treatment.id);
+                                  setIsPaymentDialogOpen(true);
+                                }}
+                              >
+                                Registrar Pago
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Consultas pendientes */}
+                    {consultasPendientes.length > 0 && (
+                      <div className="space-y-3">
+                        {tratamientosPendientes.length > 0 && (
+                          <Separator className="my-4" />
+                        )}
+                        <h4 className="text-sm font-semibold text-muted-foreground">
+                          Consultas Pendientes de Pago
+                        </h4>
+                        {consultasPendientes.map((apt) => (
+                          <div key={apt.id} className="border rounded-lg p-4 space-y-3">
+                            <div className="flex items-start justify-between">
+                              <div className="space-y-1">
+                                <h4 className="font-semibold text-foreground">
+                                  {apt.tipo_consulta}
+                                </h4>
+                                <p className="text-xs text-muted-foreground">
+                                  {new Date(apt.fecha).toLocaleDateString('es-PE', {
+                                    year: 'numeric',
+                                    month: 'long',
+                                    day: 'numeric'
+                                  })} • {apt.hora}
+                                </p>
+                              </div>
+                              <span className="font-semibold text-yellow-600">
+                                {formatCurrency(apt.costo)}
+                              </span>
+                            </div>
+
+                            <Button
+                              size="sm"
+                              className="w-full"
+                              onClick={() => {
+                                setSelectedPaymentType("consulta");
+                                setSelectedPaymentReferenceId(apt.id);
+                                setIsPaymentDialogOpen(true);
+                              }}
+                            >
+                              Registrar Pago
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {tratamientosPendientes.length === 0 && consultasPendientes.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-8 text-center">
+                        <DollarSign className="h-12 w-12 text-muted-foreground mb-3" />
+                        <p className="font-semibold text-foreground">
+                          No hay pagos pendientes
+                        </p>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Todos los tratamientos y consultas están al día
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
+
+          {/* Columna derecha - Historial de Transacciones */}
+          <div className="space-y-4">
+            <Card>
+              <CardHeader className="border-b">
+                <CardTitle className="flex items-center gap-2 text-lg">
+                  <Activity className="h-5 w-5" />
+                  Historial de Transacciones
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="p-6">
+                {loadingPagos ? (
+                  <div className="flex flex-col items-center justify-center py-8 gap-4">
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <p className="text-sm text-muted-foreground">Cargando historial...</p>
+                  </div>
+                ) : pagos.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-8 text-center">
+                    <Activity className="h-12 w-12 text-muted-foreground mb-3" />
+                    <p className="font-semibold text-foreground">
+                      No hay transacciones registradas
+                    </p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Los pagos realizados aparecerán aquí
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {pagos.map((pago) => (
+                      <div key={pago.id} className="border rounded-lg p-4 space-y-2">
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1 flex-1">
+                            <h4 className="font-semibold text-foreground">
+                              {pago.concepto || pago.referencia_nombre}
+                            </h4>
+                            <p className="text-xs text-muted-foreground">
+                              {pago.fecha.toLocaleDateString('es-PE', {
+                                year: 'numeric',
+                                month: '2-digit',
+                                day: '2-digit'
+                              })} • {pago.metodo_pago}
+                            </p>
+                          </div>
+                          <span className="font-semibold text-lg text-foreground">
+                            {formatCurrency(pago.monto)}
+                          </span>
+                        </div>
+
+                        <Badge
+                          variant="default"
+                          className="bg-blue-100 text-blue-700 dark:bg-blue-900/20 dark:text-blue-400"
+                        >
+                          Completado
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const TreatmentsTab = () => {
     const consultas = getConsultas();
@@ -394,6 +765,19 @@ export default function PacienteDetalle() {
                                 </span>
                               </div>
                             </div>
+                            {appointment.costo && appointment.costo > 0 && (
+                              <div className="bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-2 flex items-center gap-2">
+                                <div className="text-right">
+                                  <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+                                    Costo
+                                  </p>
+                                  <p className="text-lg font-bold text-green-700 dark:text-green-300">
+                                    S/ {appointment.costo}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+
                           </div>
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
                             {appointment.atendido_por && (
@@ -483,6 +867,12 @@ export default function PacienteDetalle() {
                               {treatment.tratamiento}
                             </CardTitle>
                             {getTreatmentStatusBadge(treatment.estado)}
+                            {/* BADGE ESTADO PAGO*/}
+                            {treatment.pagado && (
+                              <Badge variant="default" className="bg-green-600">
+                                Pagado
+                              </Badge>
+                            )}
                           </div>
                           <p className="text-sm text-muted-foreground">
                             Creado el {treatment.fecha_creacion.toLocaleDateString('es-PE', {
@@ -500,7 +890,9 @@ export default function PacienteDetalle() {
                             </p>
                           </div>
                         </div>
+
                       </div>
+
                     </CardHeader>
 
                     <CardContent className="p-6 space-y-6">
@@ -551,24 +943,24 @@ export default function PacienteDetalle() {
                                 <div className="col-span-1 font-medium">{item.cantidad}</div>
                                 <div className="col-span-7 text-sm">{item.descripcion}</div>
                                 <div className="col-span-2 text-right text-sm">
-                                  {item.subitems && item.subitems.length > 0 
-                                    ? "-" 
+                                  {item.subitems && item.subitems.length > 0
+                                    ? "-"
                                     : formatCurrency(item.precio_unitario)
                                   }
                                 </div>
                                 <div className="col-span-2 text-right font-medium">
                                   {formatCurrency(
                                     item.subitems && item.subitems.length > 0
-                                      ? item.subitems.reduce((sum: number, sub: any) => 
-                                          sum + (sub.cantidad * sub.precio_unitario), 0)
+                                      ? item.subitems.reduce((sum: number, sub: any) =>
+                                        sum + (sub.cantidad * sub.precio_unitario), 0)
                                       : item.cantidad * item.precio_unitario
                                   )}
                                 </div>
                               </div>
                               {item.subitems && item.subitems.length > 0 && (
                                 item.subitems.map((subitem: any, subIdx: number) => (
-                                  <div 
-                                    key={subIdx} 
+                                  <div
+                                    key={subIdx}
                                     className="px-4 py-2 grid grid-cols-12 gap-2 bg-muted/20 border-t items-center"
                                   >
                                     <div className="col-span-1 text-sm text-muted-foreground pl-4">
@@ -591,6 +983,29 @@ export default function PacienteDetalle() {
                           ))}
                         </div>
                       </div>
+                      <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setTreatmentToDelete(treatment.id);
+                            setIsDeleteDialogOpen(true);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Eliminar
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setSelectedTreatment(treatment);
+                            setIsEditTreatmentDialogOpen(true);
+                          }}
+                        >
+                          <Edit className="h-4 w-4 mr-2" />
+                          Editar
+                        </Button>
+                      </div>
 
                       {treatment.citas && treatment.citas.length > 0 && (
                         <div>
@@ -601,9 +1016,9 @@ export default function PacienteDetalle() {
                             {treatment.citas.map((citaId, idx) => {
                               const cita = appointments.find(apt => apt.id === citaId);
                               if (!cita) return null;
-                              
+
                               return (
-                                <div 
+                                <div
                                   key={citaId}
                                   className="bg-muted/30 p-3 rounded-lg flex items-center justify-between"
                                 >
@@ -641,8 +1056,8 @@ export default function PacienteDetalle() {
           </>
         )}
 
-        {(viewMode === "consultas" && consultas.length > 0) || 
-         (viewMode === "tratamientos" && treatments.length > 0) ? (
+        {(viewMode === "consultas" && consultas.length > 0) ||
+          (viewMode === "tratamientos" && treatments.length > 0) ? (
           <Card className="bg-muted/30">
             <CardContent className="p-6">
               {viewMode === "consultas" ? (
@@ -766,7 +1181,7 @@ export default function PacienteDetalle() {
           <TabsList className="grid w-full grid-cols-3 mb-6">
             <TabsTrigger value="general">Información General</TabsTrigger>
             <TabsTrigger value="treatments">Tratamientos</TabsTrigger>
-            <TabsTrigger value="financial">Financiero</TabsTrigger>
+            <TabsTrigger value="financial">Finanzas</TabsTrigger>
           </TabsList>
 
           <TabsContent value="general" className="space-y-6">
@@ -961,6 +1376,47 @@ export default function PacienteDetalle() {
         patientId={patient.id!}
         patientName={patient.fullName}
         onSuccess={handleTreatmentSuccess}
+      />
+      <TreatmentEditDialog
+        open={isEditTreatmentDialogOpen}
+        onOpenChange={setIsEditTreatmentDialogOpen}
+        treatment={selectedTreatment}
+        onSuccess={handleTreatmentSuccess}
+      />
+      <ConfirmationDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            setTreatmentToDelete(null);
+          }
+        }}
+        onConfirm={handleDeleteTreatment}
+        title="¿Eliminar tratamiento?"
+        description="Esta acción marcará el tratamiento como cancelado. Esta acción no se puede deshacer."
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        variant="destructive"
+        loading={isDeleting}
+      />
+      <PaymentDialog
+        open={isPaymentDialogOpen}
+        onOpenChange={(open) => {
+          setIsPaymentDialogOpen(open);
+          if (!open) {
+            setSelectedPaymentType(undefined);
+            setSelectedPaymentReferenceId(undefined);
+          }
+        }}
+        onSuccess={() => {
+          fetchTreatments();
+          fetchAppointments();
+          fetchPagos();
+        }}
+        preselectedPatientId={patient?.id}
+        preselectedPatientName={patient?.fullName}
+        preselectedType={selectedPaymentType}
+        preselectedReferenceId={selectedPaymentReferenceId}
       />
     </div>
   );
