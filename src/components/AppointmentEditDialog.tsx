@@ -1,3 +1,4 @@
+// src/components/AppointmentEditDialog.tsx
 import { useState, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,7 +17,6 @@ import {
     FormLabel,
     FormMessage,
 } from "@/components/ui/form";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -37,8 +37,8 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { updateAppointment } from "@/services/appointmentService";
 
-// 📋 TIPOS DE CONSULTA
 const CONSULTATION_TYPES = [
     "Evaluación general",
     "Evaluación ortodoncia",
@@ -48,7 +48,6 @@ const CONSULTATION_TYPES = [
     "Evaluación estética",
 ] as const;
 
-// ⏱️ DURACIONES DISPONIBLES
 const DURATIONS = [
     { value: "30", label: "30 minutos" },
     { value: "45", label: "45 minutos" },
@@ -57,15 +56,14 @@ const DURATIONS = [
     { value: "120", label: "2 horas" },
 ];
 
-// 📋 ESTADOS DE CITA
 const APPOINTMENT_STATUSES = [
-    { value: "pending", label: "Pendiente" },
-    { value: "confirmed", label: "Confirmada" },
-    { value: "completed", label: "Completada" },
-    { value: "cancelled", label: "Cancelada" },
+    { value: "pendiente", label: "Pendiente" },
+    { value: "confirmada", label: "Confirmada" },
+    { value: "completada", label: "Completada" },
+    { value: "cancelada", label: "Cancelada" },
+    { value: "reprogramada", label: "Reprogramada" },
 ];
 
-// 📋 SCHEMA DE VALIDACIÓN
 const editAppointmentSchema = z.object({
     date: z.date({
         required_error: "La fecha es requerida",
@@ -103,7 +101,6 @@ export default function AppointmentEditDialog({
 }: AppointmentEditDialogProps) {
     const [loading, setLoading] = useState(false);
 
-    // Form setup
     const form = useForm<EditAppointmentFormValues>({
         resolver: zodResolver(editAppointmentSchema),
         defaultValues: {
@@ -111,30 +108,46 @@ export default function AppointmentEditDialog({
             time: "",
             consultation: "",
             duration: "30",
-            status: "pending",
+            status: "pendiente",
             notes: "",
         },
     });
 
-    // Actualizar formulario cuando cambie la cita
+    // Normalizar estado de inglés a español
+    const normalizeStatus = (status: string): string => {
+        const statusMap: Record<string, string> = {
+            'confirmed': 'confirmada',
+            'pending': 'pendiente',
+            'completed': 'completada',
+            'cancelled': 'cancelada',
+        };
+        return statusMap[status?.toLowerCase()] || status;
+    };
+
+    // Cargar datos cuando se abre el diálogo
     useEffect(() => {
         if (open && appointment) {
-            // Extraer el valor numérico de la duración
+            console.log("📝 Cargando datos para editar:", appointment);
+            
+            // Extraer duración numérica
             const durationMatch = appointment.duration.match(/\d+/);
             const durationValue = durationMatch ? durationMatch[0] : "30";
 
-            form.reset({
+            const formData = {
                 date: appointment.date,
                 time: appointment.time,
                 consultation: appointment.treatment,
                 duration: durationValue,
-                status: appointment.status,
+                status: normalizeStatus(appointment.status),
                 notes: appointment.notes || "",
-            });
+            };
+
+            console.log("📊 Datos del formulario:", formData);
+            form.reset(formData);
         }
     }, [open, appointment, form]);
 
-    // FUNCIÓN PARA GENERAR HORAS (7 AM - 8 PM)
+    // Generar slots de tiempo
     const generateTimeSlots = () => {
         const slots = [];
         for (let hour = 7; hour <= 20; hour++) {
@@ -151,32 +164,53 @@ export default function AppointmentEditDialog({
 
     const timeSlots = generateTimeSlots();
 
-    // Handler de submit
     const onSubmit = async (data: EditAppointmentFormValues) => {
-        if (!appointment) return;
+        if (!appointment) {
+            console.error("❌ No hay cita seleccionada");
+            return;
+        }
 
         setLoading(true);
         
         try {
-            // Aquí irá la lógica para actualizar la cita en Firebase
-            console.log("Actualizar cita:", { id: appointment.id, ...data });
+            console.log("📝 Iniciando actualización de cita:", appointment.id);
+            console.log("📊 Datos del formulario:", data);
 
-            // TODO: Llamar al servicio de Firebase para actualizar
-            // await updateAppointment(appointment.id, data);
+            // Preparar datos para actualizar
+            const updateData = {
+                fecha: data.date,
+                hora: data.time,
+                tipo_consulta: data.consultation,
+                duracion: data.duration,
+                estado: data.status as any,
+                notas_observaciones: data.notes || "",
+            };
+
+            console.log("🔄 Enviando actualización a Firebase:", updateData);
+
+            await updateAppointment(appointment.id, updateData);
+
+            console.log("✅ Cita actualizada exitosamente");
 
             toast({
                 title: "✅ Cita actualizada",
-                description: `La cita ha sido actualizada exitosamente.`,
+                description: "Los cambios se han guardado correctamente.",
             });
 
             onOpenChange(false);
-            onSuccess?.();
+            
+            // Esperar un momento antes de recargar para que Firebase procese
+            setTimeout(() => {
+                onSuccess?.();
+            }, 500);
 
         } catch (error: any) {
-            console.error("Error al actualizar:", error);
+            console.error("❌ Error completo al actualizar:", error);
+            console.error("❌ Stack:", error.stack);
+            
             toast({
-                title: "❌ Error",
-                description: error.message || "No se pudo actualizar la cita.",
+                title: "❌ Error al actualizar",
+                description: error.message || "No se pudieron guardar los cambios. Revisa la consola.",
                 variant: "destructive",
             });
         } finally {
@@ -184,7 +218,10 @@ export default function AppointmentEditDialog({
         }
     };
 
-    if (!appointment) return null;
+    if (!appointment) {
+        console.log("⚠️ AppointmentEditDialog: No hay cita");
+        return null;
+    }
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -197,7 +234,7 @@ export default function AppointmentEditDialog({
 
                 <Form {...form}>
                     <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                        {/* Información del Paciente (Solo lectura) */}
+                        {/* Información del Paciente */}
                         <div className="p-4 bg-muted/50 rounded-lg border">
                             <p className="text-sm font-medium text-muted-foreground mb-1">Paciente</p>
                             <p className="text-lg font-semibold">{appointment.patient}</p>

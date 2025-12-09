@@ -59,7 +59,9 @@ export function Layout({ children }: LayoutProps) {
             </div>
             DentalPro
           </h1>
-          <p className="text-sm text-sidebar-foreground/70 mt-1">Sistema de Gestión</p>
+          <h2 className="text-xl font-bold text-sidebar-foreground flex items-center gap-2">
+            Bamboo
+          </h2>
         </div>
 
         <nav className="px-3 space-y-1">

@@ -7,6 +7,7 @@ import {
     DialogContent,
     DialogHeader,
     DialogTitle,
+    DialogDescription,
 } from "@/components/ui/dialog";
 import {
     Form,
@@ -32,20 +33,36 @@ import {
     PopoverTrigger,
 } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { Calendar as CalendarIcon, Clock, Search, UserPlus, Loader2 } from "lucide-react";
-import { format } from "date-fns";
+import { Calendar as CalendarIcon, Clock, Search, UserPlus, Loader2, AlertCircle } from "lucide-react";
+import { format, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 
 // Importar servicios de Firebase
-import { 
-    createPatient, 
-    createAppointment, 
+import {
+    createPatient,
+    createAppointment,
     getAllPatients,
-    findPatientByDNI 
+    findPatientByDNI,
+    getAllAppointments
 } from "@/services/appointmentService";
 import { Patient } from "@/types/appointment";
+
+
+// ==================== FUNCIÓN PARA CAPITALIZAR NOMBRES ====================
+const capitalizeWords = (text: string): string => {
+    if (!text) return "";
+
+    return text
+        .trim()
+        .split(" ")
+        .filter(word => word.length > 0)
+        .map(word => {
+            return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+        })
+        .join(" ");
+};
 
 // 📋 TIPOS DE CONSULTA
 const CONSULTATION_TYPES = [
@@ -77,13 +94,14 @@ const appointmentFormSchema = z.object({
     isNewPatient: z.boolean().default(false),
     newPatientDni: z.string().optional(),
     newPatientPhone: z.string().optional(),
+    newPatientEmail: z.string().email("Email inválido").optional().or(z.literal("")),
     consultation: z.string().min(1, "Debe seleccionar un tipo de consulta"),
     duration: z.string().min(1, "Debe seleccionar una duración"),
     notes: z.string().optional(),
 }).refine((data) => {
     if (data.isNewPatient) {
-        return data.newPatientDni && data.newPatientDni.length >= 8 && 
-               data.newPatientPhone && data.newPatientPhone.length >= 9;
+        return data.newPatientDni && data.newPatientDni.length >= 8 &&
+            data.newPatientPhone && data.newPatientPhone.length >= 9;
     }
     return true;
 }, {
@@ -113,38 +131,47 @@ export default function AppointmentDialog({
     const [patients, setPatients] = useState<Patient[]>([]);
     const [loading, setLoading] = useState(false);
     const [loadingPatients, setLoadingPatients] = useState(false);
+    const [appointments, setAppointments] = useState<any[]>([]);
+    const [validacion, setValidacion] = useState<{ disponible: boolean; mensaje: string }>({
+        disponible: true,
+        mensaje: ''
+    });
 
     // Form setup
     const form = useForm<AppointmentFormValues>({
-    resolver: zodResolver(appointmentFormSchema),
-    defaultValues: {
-        date: selectedDate || new Date(),
-        time: selectedTime || "",
-        patientId: "",
-        patientName: "",
-        isNewPatient: false,
-        newPatientDni: "",
-        newPatientPhone: "",
-        consultation: "",
-        duration: "30",
-        notes: "",
-    },
-});
+        resolver: zodResolver(appointmentFormSchema),
+        defaultValues: {
+            date: selectedDate || new Date(),
+            time: selectedTime || "",
+            patientId: "",
+            patientName: "",
+            isNewPatient: false,
+            newPatientDni: "",
+            newPatientPhone: "",
+            newPatientEmail: "",
+            consultation: "",
+            duration: "30",
+            notes: "",
+        },
+    });
 
-useEffect(() => {
-    if (open) {
-        form.setValue("date", selectedDate || new Date());
-        form.setValue("time", selectedTime || "");
-    }
-}, [open, selectedDate, selectedTime, form]);
+    useEffect(() => {
+        if (open) {
+            form.setValue("date", selectedDate || new Date());
+            form.setValue("time", selectedTime || "");
+        }
+    }, [open, selectedDate, selectedTime, form]);
 
     // Watch para modo nuevo paciente
     const isNewPatient = form.watch("isNewPatient");
+    const watchedDate = form.watch("date");
+    const watchedTime = form.watch("time");
 
-    // ==================== CARGAR PACIENTES ====================
+    // ==================== CARGAR PACIENTES Y CITAS ====================
     useEffect(() => {
         if (open) {
             loadPatients();
+            loadAppointments();
         }
     }, [open]);
 
@@ -152,9 +179,10 @@ useEffect(() => {
         setLoadingPatients(true);
         try {
             const patientsData = await getAllPatients();
-            setPatients(patientsData);
+            setPatients(patientsData || []);
         } catch (error) {
             console.error("Error al cargar pacientes:", error);
+            setPatients([]);
             toast({
                 title: "⚠️ Advertencia",
                 description: "No se pudieron cargar los pacientes.",
@@ -165,11 +193,106 @@ useEffect(() => {
         }
     };
 
+    const loadAppointments = async () => {
+        try {
+            const appointmentsData = await getAllAppointments();
+            setAppointments(appointmentsData || []);
+        } catch (error) {
+            console.error("Error al cargar citas:", error);
+            setAppointments([]);
+        }
+    };
+
+    // ==================== FUNCIÓN DE VALIDACIÓN DE DISPONIBILIDAD ====================
+    const validarDisponibilidadHorario = (fecha: Date, hora: string): { disponible: boolean; mensaje: string } => {
+        if (!fecha || !hora || !appointments || appointments.length === 0) {
+            return { disponible: true, mensaje: '' };
+        }
+
+        try {
+            // Calcular el inicio del intervalo en minutos desde medianoche
+            const horaInicio = (parseInt(hora.split(':')[0]) * 60) + parseInt(hora.split(':')[1] || '0');
+            const horaFin = horaInicio + 30; // Intervalo de 30 minutos
+
+            // Filtrar todas las citas del día seleccionado
+            const citasDelDia = appointments.filter(apt => {
+                try {
+                    // Verificar si fecha existe y tiene el método toDate
+                    if (!apt.fecha) return false;
+                    
+                    let fechaCita: Date;
+                    if (typeof apt.fecha.toDate === 'function') {
+                        fechaCita = apt.fecha.toDate();
+                    } else if (apt.fecha instanceof Date) {
+                        fechaCita = apt.fecha;
+                    } else {
+                        return false;
+                    }
+                    
+                    return isSameDay(fechaCita, fecha);
+                } catch (error) {
+                    console.error("Error procesando fecha de cita:", error);
+                    return false;
+                }
+            });
+
+            console.log(`Citas del día encontradas: ${citasDelDia.length}`, citasDelDia);
+
+            // Contar cuántas citas están activas en este intervalo de 30 minutos
+            const citasEnIntervalo = citasDelDia.filter(apt => {
+                try {
+                    if (!apt.hora || !apt.duracion) return false;
+                    
+                    const aptInicio = (parseInt(apt.hora.split(':')[0]) * 60) + parseInt(apt.hora.split(':')[1] || '0');
+                    const aptFin = aptInicio + parseInt(apt.duracion);
+
+                    // La cita se superpone con el intervalo si:
+                    // - Empieza antes de que termine el intervalo Y
+                    // - Termina después de que empiece el intervalo
+                    const seSuperpone = aptInicio < horaFin && aptFin > horaInicio;
+                    
+                    if (seSuperpone) {
+                        console.log(`Cita superpuesta: ${apt.hora} - ${apt.duracion} min`);
+                    }
+                    
+                    return seSuperpone;
+                } catch (error) {
+                    console.error("Error procesando cita:", error);
+                    return false;
+                }
+            });
+
+            console.log(`Citas en intervalo ${hora}: ${citasEnIntervalo.length}`);
+
+            if (citasEnIntervalo.length >= 3) {
+                return {
+                    disponible: false,
+                    mensaje: 'No hay disponibilidad en este horario. Ya hay 3 citas programadas para este intervalo.'
+                };
+            }
+
+            return { disponible: true, mensaje: '' };
+        } catch (error) {
+            console.error("Error en validación:", error);
+            return { disponible: true, mensaje: '' };
+        }
+    };
+
+    // ==================== VALIDAR CUANDO CAMBIE FECHA U HORA ====================
+    useEffect(() => {
+        if (watchedDate && watchedTime) {
+            const resultado = validarDisponibilidadHorario(watchedDate, watchedTime);
+            setValidacion(resultado);
+        } else {
+            setValidacion({ disponible: true, mensaje: '' });
+        }
+    }, [watchedDate, watchedTime, appointments]);
+
     // Filtrado de pacientes
     const filteredPatients = patients.filter(p => {
         const fullName = `${p.nombre} ${p.apellido_paterno} ${p.apellido_materno}`.toLowerCase();
-        return fullName.includes(searchPatient.toLowerCase()) || 
-               p.dni_cliente.includes(searchPatient);
+        return fullName.includes(searchPatient.toLowerCase()) ||
+            p.dni_cliente.includes(searchPatient);
     });
 
     // FUNCIÓN PARA GENERAR HORAS (7 AM - 8 PM)
@@ -191,8 +314,9 @@ useEffect(() => {
 
     // ==================== SEPARAR NOMBRE COMPLETO ====================
     const separateFullName = (fullName: string) => {
-        const parts = fullName.trim().split(" ");
-        
+        const capitalizedName = capitalizeWords(fullName);
+        const parts = capitalizedName.split(" ");
+
         if (parts.length === 1) {
             return { nombre: parts[0], apellido_paterno: "", apellido_materno: "" };
         } else if (parts.length === 2) {
@@ -200,7 +324,6 @@ useEffect(() => {
         } else if (parts.length === 3) {
             return { nombre: parts[0], apellido_paterno: parts[1], apellido_materno: parts[2] };
         } else {
-            // Si hay más de 3 palabras, asumir que los primeros son nombres y los últimos 2 son apellidos
             const apellido_materno = parts.pop() || "";
             const apellido_paterno = parts.pop() || "";
             const nombre = parts.join(" ");
@@ -210,8 +333,18 @@ useEffect(() => {
 
     // ==================== HANDLER DE SUBMIT ====================
     const onSubmit = async (data: AppointmentFormValues) => {
+        // Validar disponibilidad antes de crear
+        if (!validacion.disponible) {
+            toast({
+                title: "⚠️ Horario no disponible",
+                description: validacion.mensaje,
+                variant: "destructive",
+            });
+            return;
+        }
+
         setLoading(true);
-        
+
         try {
             let patientId = data.patientId;
 
@@ -219,7 +352,7 @@ useEffect(() => {
             if (data.isNewPatient) {
                 // Verificar si el DNI ya existe
                 const existingPatient = await findPatientByDNI(data.newPatientDni!);
-                
+
                 if (existingPatient) {
                     toast({
                         title: "⚠️ Paciente ya existe",
@@ -237,6 +370,7 @@ useEffect(() => {
                         apellido_materno,
                         dni_cliente: data.newPatientDni!,
                         celular: data.newPatientPhone!,
+                        email: data.newPatientEmail || "",
                         // Campos opcionales con valores por defecto vacíos
                         edad: undefined,
                         sexo: "",
@@ -250,7 +384,7 @@ useEffect(() => {
                     };
 
                     patientId = await createPatient(newPatientData);
-                    
+
                     toast({
                         title: "✅ Paciente creado",
                         description: `Paciente ${data.patientName} creado exitosamente.`,
@@ -263,12 +397,14 @@ useEffect(() => {
                 throw new Error("No se pudo obtener el ID del paciente");
             }
 
+            const capitalizedPatientName = capitalizeWords(data.patientName);
+
             // ========== CREAR LA CITA ==========
             const appointmentData = {
                 fecha: data.date,
                 hora: data.time,
                 paciente_id: patientId,
-                paciente_nombre: data.patientName,
+                paciente_nombre: capitalizedPatientName,
                 tipo_consulta: data.consultation,
                 duracion: data.duration,
                 notas_observaciones: data.notes || "",
@@ -279,7 +415,7 @@ useEffect(() => {
 
             toast({
                 title: "✅ Cita creada exitosamente",
-                description: `Cita para ${data.patientName} agendada el ${format(data.date, "PPP", { locale: es })} a las ${data.time}.`,
+                description: `Cita para ${capitalizedPatientName} agendada el ${format(data.date, "PPP", { locale: es })} a las ${data.time}.`,
             });
 
             // Reset y cerrar
@@ -305,6 +441,9 @@ useEffect(() => {
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="text-2xl font-semibold">Nueva Cita</DialogTitle>
+                    <DialogDescription className="sr-only">
+                        Formulario para crear una nueva cita médica
+                    </DialogDescription>
                 </DialogHeader>
 
                 <Form {...form}>
@@ -377,6 +516,14 @@ useEffect(() => {
                                             </SelectContent>
                                         </Select>
                                         <FormMessage />
+                                        
+                                        {/* MENSAJE DE ERROR DE DISPONIBILIDAD */}
+                                        {!validacion.disponible && (
+                                            <div className="mt-2 text-sm text-red-600 bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 rounded-md p-3 flex items-start gap-2">
+                                                <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
+                                                <span>{validacion.mensaje}</span>
+                                            </div>
+                                        )}
                                     </FormItem>
                                 )}
                             />
@@ -420,15 +567,18 @@ useEffect(() => {
                                                                 key={patient.id}
                                                                 type="button"
                                                                 onClick={() => {
+                                                                    const capitalizedName = capitalizeWords(
+                                                                        `${patient.nombre} ${patient.apellido_paterno} ${patient.apellido_materno}`
+                                                                    );
                                                                     form.setValue("patientId", patient.id!);
-                                                                    form.setValue("patientName", `${patient.nombre} ${patient.apellido_paterno} ${patient.apellido_materno}`);
+                                                                    form.setValue("patientName", capitalizedName);
                                                                     form.setValue("isNewPatient", false);
-                                                                    setSearchPatient(`${patient.nombre} ${patient.apellido_paterno} ${patient.apellido_materno}`);
+                                                                    setSearchPatient(capitalizedName);
                                                                 }}
                                                                 className="w-full text-left px-3 py-2 hover:bg-accent rounded-md transition-colors"
                                                             >
                                                                 <div className="font-medium">
-                                                                    {patient.nombre} {patient.apellido_paterno} {patient.apellido_materno}
+                                                                    {capitalizeWords(`${patient.nombre} ${patient.apellido_paterno} ${patient.apellido_materno}`)}
                                                                 </div>
                                                                 <div className="text-sm text-muted-foreground">
                                                                     DNI: {patient.dni_cliente}
@@ -478,10 +628,10 @@ useEffect(() => {
                                             <FormItem>
                                                 <FormLabel>DNI *</FormLabel>
                                                 <FormControl>
-                                                    <Input 
-                                                        placeholder="12345678" 
+                                                    <Input
+                                                        placeholder="12345678"
                                                         maxLength={8}
-                                                        {...field} 
+                                                        {...field}
                                                     />
                                                 </FormControl>
                                                 <FormMessage />
@@ -496,9 +646,9 @@ useEffect(() => {
                                             <FormItem>
                                                 <FormLabel>Teléfono *</FormLabel>
                                                 <FormControl>
-                                                    <Input 
-                                                        placeholder="+51 999 888 777" 
-                                                        {...field} 
+                                                    <Input
+                                                        placeholder="+51 999 888 777"
+                                                        {...field}
                                                     />
                                                 </FormControl>
                                                 <FormMessage />
@@ -594,7 +744,10 @@ useEffect(() => {
                             >
                                 Cancelar
                             </Button>
-                            <Button type="submit" disabled={loading}>
+                            <Button 
+                                type="submit" 
+                                disabled={loading || !validacion.disponible}
+                            >
                                 {loading ? (
                                     <>
                                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />

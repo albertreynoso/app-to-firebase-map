@@ -5,6 +5,8 @@ import {
   doc, 
   getDoc, 
   getDocs, 
+  updateDoc,
+  deleteDoc,
   query, 
   where,
   Timestamp,
@@ -13,22 +15,48 @@ import {
 import { db } from "@/lib/firebase";
 import { Patient, Appointment } from "@/types/appointment";
 
+// ==================== UTILIDADES ====================
+
+/**
+ * Capitaliza correctamente nombres y apellidos
+ * Ejemplos: "maría josé" -> "María José", "de la cruz" -> "De La Cruz"
+ */
+const capitalizeName = (name: string): string => {
+  if (!name) return "";
+  
+  return name
+    .toLowerCase()
+    .split(" ")
+    .map(word => {
+      // Palabras que no deben capitalizarse en apellidos compuestos
+      const exceptions = ["de", "del", "la", "los", "las", "y"];
+      
+      if (exceptions.includes(word)) {
+        return word;
+      }
+      
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(" ");
+};
+
 // ==================== PACIENTES ====================
 
 /**
- * Crear un nuevo paciente en Firebase
+ * Crear un nuevo paciente en Firebase con nombres capitalizados
  */
 export const createPatient = async (patientData: Omit<Patient, "id" | "fecha_creacion">): Promise<string> => {
   try {
     console.log("📝 Intentando crear paciente con datos:", patientData);
 
-    // Preparar datos para Firebase
+    // Capitalizar nombres y apellidos
     const patientForFirebase = {
-      nombre: patientData.nombre || "",
-      apellido_paterno: patientData.apellido_paterno || "",
-      apellido_materno: patientData.apellido_materno || "",
+      nombre: capitalizeName(patientData.nombre),
+      apellido_paterno: capitalizeName(patientData.apellido_paterno),
+      apellido_materno: capitalizeName(patientData.apellido_materno),
       dni_cliente: patientData.dni_cliente,
       celular: patientData.celular,
+      email: patientData.email?.toLowerCase() || "", // Email en minúsculas
       edad: patientData.edad || null,
       sexo: patientData.sexo || "",
       direccion: patientData.direccion || "",
@@ -166,6 +194,12 @@ export const createAppointment = async (
       notas_observaciones: appointmentData.notas_observaciones || "",
       estado: appointmentData.estado,
       fecha_creacion: serverTimestamp(),
+      
+      // Nuevos campos opcionales
+      atendido_por: appointmentData.atendido_por || "",
+      duracion_real: appointmentData.duracion_real || "",
+      hora_inicio_atencion: appointmentData.hora_inicio_atencion || "",
+      hora_fin_atencion: appointmentData.hora_fin_atencion || "",
     };
 
     console.log("🔄 Datos preparados para Firebase:", appointmentForFirebase);
@@ -180,6 +214,71 @@ export const createAppointment = async (
     console.error("❌ Mensaje:", error.message);
     throw new Error(`Error al crear cita: ${error.message}`);
   }
+};
+
+/**
+ * Actualizar una cita existente
+ */
+export const updateAppointment = async (
+  appointmentId: string,
+  updates: Partial<Appointment>
+): Promise<void> => {
+  try {
+    console.log("📝 Actualizando cita:", appointmentId, updates);
+
+    const appointmentRef = doc(db, "citas", appointmentId);
+    
+    // Preparar datos para actualización
+    const updateData: any = {};
+    
+    if (updates.fecha) {
+      updateData.fecha = Timestamp.fromDate(updates.fecha);
+    }
+    if (updates.hora !== undefined) updateData.hora = updates.hora;
+    if (updates.tipo_consulta !== undefined) updateData.tipo_consulta = updates.tipo_consulta;
+    if (updates.duracion !== undefined) updateData.duracion = updates.duracion;
+    if (updates.estado !== undefined) updateData.estado = updates.estado;
+    if (updates.notas_observaciones !== undefined) updateData.notas_observaciones = updates.notas_observaciones;
+    if (updates.atendido_por !== undefined) updateData.atendido_por = updates.atendido_por;
+    if (updates.duracion_real !== undefined) updateData.duracion_real = updates.duracion_real;
+    if (updates.hora_inicio_atencion !== undefined) updateData.hora_inicio_atencion = updates.hora_inicio_atencion;
+    if (updates.hora_fin_atencion !== undefined) updateData.hora_fin_atencion = updates.hora_fin_atencion;
+
+    await updateDoc(appointmentRef, updateData);
+    
+    console.log("✅ Cita actualizada exitosamente");
+  } catch (error: any) {
+    console.error("❌ Error al actualizar cita:", error);
+    throw new Error(`Error al actualizar cita: ${error.message}`);
+  }
+};
+
+/**
+ * Cancelar una cita (eliminarla de la base de datos)
+ */
+export const cancelAppointment = async (appointmentId: string): Promise<void> => {
+  try {
+    console.log("🗑️ Eliminando cita:", appointmentId);
+    
+    const appointmentRef = doc(db, "citas", appointmentId);
+    await deleteDoc(appointmentRef);
+    
+    console.log("✅ Cita eliminada exitosamente");
+  } catch (error: any) {
+    console.error("❌ Error al eliminar cita:", error);
+    throw new Error(`Error al eliminar cita: ${error.message}`);
+  }
+};
+
+export const getAppointmentsByPatientId = async (patientId: string) => {
+  const appointmentsRef = collection(db, "citas");
+  const q = query(appointmentsRef, where("paciente_id", "==", patientId));
+  const snapshot = await getDocs(q);
+  
+  return snapshot.docs.map(doc => ({
+    id: doc.id,
+    ...doc.data()
+  }));
 };
 
 /**

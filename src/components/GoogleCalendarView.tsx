@@ -1,3 +1,4 @@
+// src/components/GoogleCalendarView.tsx
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -22,7 +23,7 @@ interface Appointment {
   dentistId: string;
   treatment: string;
   duration: string;
-  status: "confirmed" | "pending" | "completed";
+  status: "confirmed" | "pending" | "completed" | "cancelled" | "reprogramed" | "confirmada" | "pendiente" | "completada" | "cancelada" | "reprogramada";
   date: Date;
   notes?: string;
   color: string;
@@ -63,9 +64,9 @@ export default function GoogleCalendarView({
 
   // Obtener días de la semana
   const getWeekDays = () => {
-  const start = startOfWeek(currentDate, { weekStartsOn: 1 }); // Cambia de 0 a 1
-  return Array.from({ length: 7 }, (_, i) => addDays(start, i));
-};
+    const start = startOfWeek(currentDate, { weekStartsOn: 1 });
+    return Array.from({ length: 7 }, (_, i) => addDays(start, i));
+  };
 
   const weekDays = getWeekDays();
 
@@ -90,25 +91,278 @@ export default function GoogleCalendarView({
 
   // Obtener citas para un slot específico
   const getAppointmentsForSlot = (date: Date, time: string): Appointment[] => {
-    return appointments.filter(apt =>
-      isSameDay(apt.date, date) && apt.time === time
-    );
+    // Extraer la hora del slot (ej: "14:00" -> 14)
+    const slotHour = parseInt(time.split(':')[0]);
+
+    return appointments.filter(apt => {
+      if (!isSameDay(apt.date, date)) return false;
+
+      // Extraer la hora de la cita (ej: "14:30" -> 14)
+      const aptHour = parseInt(apt.time.split(':')[0]);
+
+      // La cita pertenece a este slot si su hora coincide
+      return aptHour === slotHour;
+    });
   };
 
-  // Calcular altura del evento
+  // Calcular altura del evento basado en duración real
   const getEventHeight = (duration: string): number => {
     const minutes = parseInt(duration);
-    return (minutes / 60) * 48;
+    // Cada hora tiene 144px, entonces cada minuto = 144/60 = 2.4px
+    return (minutes / 60) * 144;
   };
 
-  // Obtener color por estado
-  const getStatusColor = (status: string): string => {
-    const colors = {
-      confirmed: 'bg-blue-500',
-      pending: 'bg-amber-500',
-      completed: 'bg-green-500'
+  // Función para ordenar y posicionar citas por duración (superpuestas de izquierda a derecha)
+  const getAppointmentLayout = (appointments: Appointment[], allDayAppointments: Appointment[], currentSlotTime: string) => {
+    if (appointments.length === 0) return [];
+
+    // Definir tipo para citas con información de posición
+    type AppointmentWithPosition = {
+      appointment: Appointment;
+      topPosition: number;
+      bottomPosition: number;
+      height: number;
+      minutes: number;
+      duration: number;
     };
-    return colors[status as keyof typeof colors] || 'bg-gray-500';
+
+    // Calcular posición vertical real de cada cita basada en sus minutos
+    const appointmentsWithPosition: AppointmentWithPosition[] = appointments.map(apt => {
+      const minutes = parseInt(apt.time.split(':')[1] || '0');
+      const duration = parseInt(apt.duration);
+      const topPosition = minutes * 2.4;
+      const height = getEventHeight(apt.duration);
+      const bottomPosition = topPosition + height;
+
+      return {
+        appointment: apt,
+        topPosition,
+        bottomPosition,
+        height,
+        minutes,
+        duration
+      };
+    });
+
+    // Ordenar por minuto de inicio, luego por duración (menor primero)
+    const sorted = [...appointmentsWithPosition].sort((a, b) => {
+      if (a.minutes !== b.minutes) {
+        return a.minutes - b.minutes;
+      }
+      return a.duration - b.duration;
+    });
+
+    const result: any[] = [];
+
+    // Procesar cada cita individualmente
+    sorted.forEach((currentItem, currentIndex) => {
+
+      // PASO 1: Identificar todas las citas que empiezan al mismo minuto Y a la misma hora
+      const citasMismoMinuto = sorted.filter(item =>
+        item.minutes === currentItem.minutes &&
+        item.appointment.time.split(':')[0] === currentItem.appointment.time.split(':')[0]
+      );
+      const esCitaMismoMinuto = citasMismoMinuto.length > 1;
+
+      let finalWidth: number;
+      let finalOffsetLeft: number;
+      let finalZIndex: number;
+      let isTopMost: boolean;
+
+      if (esCitaMismoMinuto) {
+        // LÓGICA: Citas que empiezan al mismo tiempo
+        const indexEnGrupo = citasMismoMinuto.findIndex(item => item === currentItem);
+        const totalEnGrupo = citasMismoMinuto.length;
+
+        // IMPORTANTE: Verificar si hay otras citas (de otros horarios) superpuestas
+        const allDayWithPosition = allDayAppointments.map(apt => {
+          const minutes = parseInt(apt.time.split(':')[1] || '0');
+          const duration = parseInt(apt.duration);
+          return {
+            appointment: apt,
+            minutes,
+            duration
+          };
+        });
+
+        const citasSuperpuestas = allDayWithPosition.filter((otherItem) => {
+          // No comparar consigo misma ni con las del mismo grupo
+          if (otherItem.appointment.id === currentItem.appointment.id) return false;
+          const esMismoGrupo = citasMismoMinuto.some(c => c.appointment.id === otherItem.appointment.id);
+          if (esMismoGrupo) return false;
+
+          // Calcular superposición temporal REAL
+          const currentStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
+          const currentEndMinutes = currentStartMinutes + currentItem.duration;
+
+          const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
+          const otherEndMinutes = otherStartMinutes + otherItem.duration;
+
+          // Hay superposición REAL si:
+          // La otra cita empieza ANTES de que termine esta cita
+          // Y la otra cita termina DESPUÉS de que empieza esta cita
+          const haySuperposicion = otherStartMinutes < currentEndMinutes && otherEndMinutes > currentStartMinutes;
+
+          return haySuperposicion;
+        });
+
+        // Verificar si hay citas externas que se superponen con TODAS las citas del grupo
+        const citasExternasQueAfectanATodas = allDayWithPosition.filter((otherItem) => {
+          if (otherItem.appointment.id === currentItem.appointment.id) return false;
+          const esMismoGrupo = citasMismoMinuto.some(c => c.appointment.id === otherItem.appointment.id);
+          if (esMismoGrupo) return false;
+
+          // Verificar si esta cita externa se superpone con TODAS las citas del grupo
+          const seSuperponConTodas = citasMismoMinuto.every((citaGrupo) => {
+            const grupoStartMinutes = (parseInt(citaGrupo.appointment.time.split(':')[0]) * 60) + citaGrupo.minutes;
+            const grupoEndMinutes = grupoStartMinutes + citaGrupo.duration;
+
+            const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
+            const otherEndMinutes = otherStartMinutes + otherItem.duration;
+
+            return otherStartMinutes < grupoEndMinutes && otherEndMinutes > grupoStartMinutes;
+          });
+
+          return seSuperponConTodas;
+        });
+
+        const totalCitasAfectadas = citasExternasQueAfectanATodas.length;
+        const totalCitas = totalEnGrupo + totalCitasAfectadas;
+
+        // Calcular ancho basado en el total
+        if (totalCitas === 1) {
+          finalWidth = 90;
+          finalOffsetLeft = 0;
+        } else if (totalCitas === 2) {
+          finalWidth = 75;
+          finalOffsetLeft = indexEnGrupo * 25;
+        } else {
+          // 3 o más citas superpuestas
+          finalWidth = 60;
+          finalOffsetLeft = indexEnGrupo * 25;
+        }
+
+        // Z-index basado en tiempo relativo (valores bajos: 1-30)
+        const absoluteStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
+        // Normalizar a rango 1-30
+        finalZIndex = Math.floor((absoluteStartMinutes - 420) / 30) + 1 - indexEnGrupo;
+        isTopMost = indexEnGrupo === 0;
+      } else {
+        // NUEVA LÓGICA: Cita que empieza en un momento diferente
+
+        // Contar cuántas citas anteriores están todavía en proceso
+        // Contar cuántas citas anteriores están todavía en proceso
+        // Procesar TODAS las citas del día, no solo las del slot actual
+        const allDayWithPosition = allDayAppointments.map(apt => {
+          const minutes = parseInt(apt.time.split(':')[1] || '0');
+          const duration = parseInt(apt.duration);
+          return {
+            appointment: apt,
+            minutes,
+            duration
+          };
+        });
+
+        const citasEnProceso = allDayWithPosition.filter((otherItem) => {
+          // No comparar consigo misma
+          if (otherItem.appointment.id === currentItem.appointment.id) return false;
+
+          // Calcular tiempo de inicio y fin en minutos totales desde medianoche
+          const currentStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
+
+          const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
+          const otherEndMinutes = otherStartMinutes + otherItem.duration;
+
+          // La cita está en proceso si:
+          // 1. Empieza antes que currentItem
+          // 2. Termina después de que empieza currentItem
+          return otherStartMinutes < currentStartMinutes && otherEndMinutes > currentStartMinutes;
+        });
+
+        const numEnProceso = citasEnProceso.length;
+
+        // Asignar ancho según cantidad de citas en proceso
+        // Las citas nuevas SIEMPRE empiezan desde la izquierda (offsetLeft = 0)
+        if (numEnProceso === 0) {
+          finalWidth = 90;
+          finalOffsetLeft = 0;
+        } else if (numEnProceso === 1) {
+          finalWidth = 75;
+          finalOffsetLeft = 0;
+        } else {
+          finalWidth = 60;
+          finalOffsetLeft = 0;
+        }
+
+        // Z-index basado en tiempo relativo (valores bajos: 1-30)
+        const absoluteStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
+        // Normalizar a rango 1-30
+        finalZIndex = Math.floor((absoluteStartMinutes - 420) / 30) + 1;
+
+        // Mostrar info si no hay otra cita posterior que se superponga
+        const hayCitaPosterior = sorted.some((otherItem, otherIndex) => {
+          if (otherIndex <= currentIndex) return false;
+
+          const seSuperponen = !(currentItem.bottomPosition <= otherItem.topPosition ||
+            otherItem.bottomPosition <= currentItem.topPosition);
+
+          return seSuperponen;
+        });
+
+        isTopMost = !hayCitaPosterior;
+      }
+
+      result.push({
+        appointment: currentItem.appointment,
+        height: currentItem.height,
+        offsetLeft: finalOffsetLeft,
+        offsetTop: 0,
+        width: finalWidth,
+        zIndex: finalZIndex,
+        isTopMost: isTopMost
+      });
+    });
+
+    return result;
+  };
+
+  // Función para calcular la posición vertical de múltiples citas
+  const getAppointmentPosition = (appointments: Appointment[], index: number): { top: number; height: number } => {
+    const slotHeight = 144; // Nueva altura del slot
+    const spacing = 4; // Espaciado entre citas
+    const appointmentCount = appointments.length;
+
+    if (appointmentCount === 1) {
+      return {
+        top: spacing,
+        height: Math.min(getEventHeight(appointments[0].duration), slotHeight - spacing * 2)
+      };
+    }
+
+    // Dividir el espacio disponible entre todas las citas
+    const availableHeight = slotHeight - (spacing * (appointmentCount + 1));
+    const heightPerAppointment = availableHeight / appointmentCount;
+
+    return {
+      top: spacing + (index * (heightPerAppointment + spacing)),
+      height: Math.min(heightPerAppointment, getEventHeight(appointments[index].duration))
+    };
+  };
+
+  // Función para obtener nombre y primer apellido
+  const getShortName = (fullName: string): string => {
+    if (!fullName) return "";
+
+    const parts = fullName.trim().split(" ");
+    if (parts.length === 1) return parts[0];
+    if (parts.length === 2) return `${parts[0]} ${parts[1]}`;
+
+    // Si tiene más de dos palabras, tomar el primer nombre y primer apellido
+    // Asumiendo que el último es apellido materno
+    const firstName = parts[0];
+    const lastName = parts[1]; // Primer apellido (apellido paterno)
+
+    return `${firstName} ${lastName}`;
   };
 
   return (
@@ -141,7 +395,6 @@ export default function GoogleCalendarView({
         </div>
 
         <div className="flex items-center gap-2">
-
           <Button
             className="ml-2"
             onClick={onNewAppointment}
@@ -193,7 +446,7 @@ export default function GoogleCalendarView({
               <div
                 key={hourIndex}
                 className="grid grid-cols-[80px_repeat(7,1fr)] border-b border-border/50"
-                style={{ minHeight: '48px' }}
+                style={{ height: '144px' }}
               >
                 <div className="text-right pr-4 pt-1 text-xs text-muted-foreground border-r">
                   {hour.label}
@@ -201,36 +454,57 @@ export default function GoogleCalendarView({
 
                 {weekDays.map((day, dayIndex) => {
                   const slotAppointments = getAppointmentsForSlot(day, hour.time);
+                  // Obtener TODAS las citas del día para verificar citas en proceso
+                  const allDayAppointments = appointments.filter(apt => isSameDay(apt.date, day));
+                  const layout = getAppointmentLayout(slotAppointments, allDayAppointments, hour.time);
 
                   return (
                     <div
                       key={dayIndex}
-                      className="border-r last:border-r-0 relative hover:bg-accent/50 cursor-pointer transition-colors"
+                      className="border-r last:border-r-0 relative hover:bg-accent/50 cursor-pointer transition-colors overflow-visible"
                       onClick={() => onSlotClick(day, hour.time)}
                     >
-                      {slotAppointments.map((apt, aptIndex) => (
+                      {layout.map(({ appointment: apt, height, offsetLeft, offsetTop, width, zIndex, isTopMost }) => (
                         <div
                           key={apt.id}
-                          className={`absolute left-1 right-1 ${getStatusColor(apt.status)} rounded-md shadow-md p-2 overflow-hidden z-10 cursor-pointer hover:opacity-90 transition-opacity`}
+                          className="absolute rounded-md shadow-lg overflow-hidden cursor-pointer hover:shadow-xl hover:brightness-110 transition-all group"
                           style={{
-                            top: '2px',
-                            height: `${Math.min(getEventHeight(apt.duration), 46)}px`,
-                            marginLeft: `${aptIndex * 4}px`
+                            top: `${4 + offsetTop + (parseInt(apt.time.split(':')[1] || '0') * 2.4)}px`, // Posición según minutos
+                            left: `${4 + offsetLeft}px`,
+                            width: `${width}%`,
+                            height: `${height}px`,
+                            backgroundColor: apt.color,
+                            zIndex: zIndex,
+                            border: '2px solid rgba(255, 255, 255, 0.3)',
                           }}
                           onClick={(e) => {
                             e.stopPropagation();
                             onAppointmentClick(apt);
                           }}
                         >
-                          <div className="text-white text-xs font-medium truncate">
-                            {apt.patient}
-                          </div>
-                          <div className="text-white/90 text-[10px] truncate">
-                            {apt.treatment}
-                          </div>
-                          <div className="text-white/80 text-[10px]">
-                            {hour.time}
-                          </div>
+                          {/* Contenido visible solo en la cita superior (la más corta) */}
+                          {isTopMost ? (
+                            <div className="h-full flex flex-col justify-start p-[8px]">
+                              <div className="text-left w-full">
+                                <div className="text-white text-sm font-semibold leading-tight drop-shadow-md">
+                                  {apt.patient.split(" ").slice(0, 2).join(" ")}
+                                </div>
+                                <div className="text-white/95 text-xs truncate mt-1 drop-shadow-sm">
+                                  {apt.treatment}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            // Sin texto para citas ocultas - completamente vacío
+                            <div className="h-full" />
+                          )}
+
+                          {/* Badge de duración solo visible al hacer hover */}
+                          {!isTopMost && (
+                            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[9px] px-2 py-1 rounded-full font-medium opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm shadow-sm uppercase">
+                              ver
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
