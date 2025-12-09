@@ -3,33 +3,99 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, Mail, Phone, UserCheck, MapPin, Calendar, IdCard } from "lucide-react";
-import { collection, getDocs } from "firebase/firestore";
-import { db } from "../firebase.config"; // Ajusta la ruta según tu configuración de Firebase
+import {
+  Plus,
+  Search,
+  Phone,
+  MapPin,
+  Calendar,
+  IdCard,
+  Loader2,
+  AlertCircle,
+  Edit,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
+  X,
+  Users,
+} from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { collection, getDocs, deleteDoc, doc, query, orderBy } from "firebase/firestore";
+import { db } from "@/lib/firebase";
+import { toast } from "@/hooks/use-toast";
+import { EmployeeWithStats, getRoleFromType } from "@/types/employee";
+import EmployeeDialog from "@/components/EmployeeDialog";
+import EmployeeEditDialog from "@/components/EmployeeEditDialog";
+import ConfirmationDialog from "@/components/ConfirmationDialog";
 
 export default function Empleados() {
   const [searchTerm, setSearchTerm] = useState("");
-  const [employees, setEmployees] = useState([]);
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [showFilters, setShowFilters] = useState(false);
+  const [employees, setEmployees] = useState<EmployeeWithStats[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  
+  // Estados para diálogos
+  const [isNewEmployeeDialogOpen, setIsNewEmployeeDialogOpen] = useState(false);
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [selectedEmployee, setSelectedEmployee] = useState<EmployeeWithStats | null>(null);
+  const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  // Función para obtener empleados de Firestore
+  // Paginación
+  const [currentPage, setCurrentPage] = useState(1);
+  const [employeesPerPage, setEmployeesPerPage] = useState(10);
+
   const fetchEmployees = async () => {
     try {
-      const querySnapshot = await getDocs(collection(db, "personal"));
-      const employeesData = [];
-      
-      querySnapshot.forEach((doc) => {
+      setLoading(true);
+      setError(null);
+
+      const employeesRef = collection(db, "personal");
+      const q = query(employeesRef, orderBy("fecha_creacion", "desc"));
+      const querySnapshot = await getDocs(q);
+
+      const employeesData: EmployeeWithStats[] = querySnapshot.docs.map((doc) => {
         const data = doc.data();
-        employeesData.push({
+        const fullName = `${data.nombre || ''} ${data.apellido_paterno || ''} ${data.apellido_materno || ''}`.trim();
+        const initials = `${data.nombre?.[0] || ''}${data.apellido_paterno?.[0] || ''}`.toUpperCase();
+
+        return {
           id: doc.id,
-          ...data
-        });
+          nombre: data.nombre || "",
+          apellido_paterno: data.apellido_paterno || "",
+          apellido_materno: data.apellido_materno || "",
+          dni_empleado: data.dni_empleado || "",
+          edad: data.edad || "",
+          fecha_nacimiento: data.fecha_nacimiento || "",
+          genero: data.genero || "",
+          numero_telefonico: data.numero_telefonico || "",
+          direccion: data.direccion || "",
+          tipo_empleado_id: data.tipo_empleado_id || "",
+          fecha_contratacion: data.fecha_contratacion || "",
+          salario: data.salario || 0,
+          activo: data.activo ?? true,
+          fecha_creacion: data.fecha_creacion?.toDate?.() || new Date(),
+          fullName,
+          initials,
+        };
       });
-      
+
       setEmployees(employeesData);
-      setLoading(false);
-    } catch (error) {
-      console.error("Error fetching employees:", error);
+    } catch (err) {
+      console.error("Error al obtener empleados:", err);
+      setError("Error al cargar los empleados. Por favor, intenta de nuevo.");
+    } finally {
       setLoading(false);
     }
   };
@@ -38,163 +104,494 @@ export default function Empleados() {
     fetchEmployees();
   }, []);
 
-  // Función para mapear tipo_empleado_id a roles en español
-  const getRoleFromType = (tipoEmpleado) => {
-    const roleMap = {
-      "Administrativo": "Administrativo",
-      "Dentista": "Dentista",
-      "Asistente": "Asistente Dental",
-      "Recepcionista": "Recepcionista",
-      "Higienista": "Higienista Dental"
-    };
-    return roleMap[tipoEmpleado] || tipoEmpleado;
+  useEffect(() => {
+    if (!isNewEmployeeDialogOpen && !isEditDialogOpen) {
+      fetchEmployees();
+    }
+  }, [isNewEmployeeDialogOpen, isEditDialogOpen]);
+
+  const handleEditEmployee = (employee: EmployeeWithStats) => {
+    setSelectedEmployee(employee);
+    setIsEditDialogOpen(true);
   };
 
-  // Función para generar imagen de perfil basada en género y nombre
-  const getProfileImage = (employee) => {
-    // Puedes usar un servicio como DiceBear o mantener imágenes locales
-    const gender = employee.genero?.toLowerCase() || "neutral";
-    const name = employee.nombre || "User";
-    
-    // Imágenes de placeholder basadas en género (puedes cambiar estas URLs)
-    const maleImage = "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?w=150&h=150&fit=crop&crop=face";
-    const femaleImage = "https://images.unsplash.com/photo-1494790108755-2616b612b786?w=150&h=150&fit=crop&crop=face";
-    const neutralImage = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&h=150&fit=crop&crop=face";
-    
-    return gender.includes("femenino") ? femaleImage : 
-           gender.includes("masculino") ? maleImage : neutralImage;
+  const handleDeleteEmployee = async () => {
+    if (!employeeToDelete) return;
+
+    try {
+      setIsDeleting(true);
+      const employeeRef = doc(db, "personal", employeeToDelete);
+      await deleteDoc(employeeRef);
+
+      toast({
+        title: "✅ Empleado eliminado",
+        description: "El empleado ha sido eliminado permanentemente.",
+      });
+
+      fetchEmployees();
+      setIsDeleteDialogOpen(false);
+      setEmployeeToDelete(null);
+    } catch (error) {
+      console.error("Error al eliminar empleado:", error);
+      toast({
+        title: "❌ Error",
+        description: "No se pudo eliminar el empleado.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
-  // Filtrar empleados basado en la búsqueda
+  const formatSalary = (salary: number) => {
+    return new Intl.NumberFormat('es-PE', {
+      style: 'currency',
+      currency: 'PEN',
+    }).format(salary);
+  };
+
+  // Filtrado
   const filteredEmployees = employees.filter((emp) => {
     const searchLower = searchTerm.toLowerCase();
-    return (
-      emp.nombre?.toLowerCase().includes(searchLower) ||
-      emp.apellido_paterno?.toLowerCase().includes(searchLower) ||
-      emp.apellido_materno?.toLowerCase().includes(searchLower) ||
-      emp.dni_empleado?.includes(searchTerm) ||
-      emp.tipo_empleado_id?.toLowerCase().includes(searchLower) ||
-      emp.numero_telefonico?.includes(searchTerm)
-    );
+    const searchMatch =
+      emp.fullName.toLowerCase().includes(searchLower) ||
+      emp.dni_empleado.includes(searchTerm) ||
+      emp.numero_telefonico.includes(searchTerm) ||
+      emp.tipo_empleado_id.toLowerCase().includes(searchLower);
+
+    const statusMatch = statusFilter === "all" || 
+      (statusFilter === "active" && emp.activo) ||
+      (statusFilter === "inactive" && !emp.activo);
+
+    const typeMatch = typeFilter === "all" || emp.tipo_empleado_id === typeFilter;
+
+    return searchMatch && statusMatch && typeMatch;
   });
 
-  // Formatear nombre completo
-  const getFullName = (employee) => {
-    return `${employee.nombre || ''} ${employee.apellido_paterno || ''} ${employee.apellido_materno || ''}`.trim();
+  const clearFilters = () => {
+    setStatusFilter("all");
+    setTypeFilter("all");
+    setSearchTerm("");
+    setCurrentPage(1);
   };
 
-  // Formatear salario
-  const formatSalary = (salary) => {
-    return `S/ ${Number(salary).toLocaleString('es-PE')}`;
+  const activeFiltersCount = [
+    statusFilter !== "all",
+    typeFilter !== "all",
+    searchTerm !== ""
+  ].filter(Boolean).length;
+
+  // Estadísticas
+  const totalEmployees = employees.length;
+  const activeEmployees = employees.filter(e => e.activo).length;
+  const inactiveEmployees = employees.filter(e => !e.activo).length;
+
+  // Paginación
+  const totalPages = Math.ceil(filteredEmployees.length / employeesPerPage);
+  const indexOfLastEmployee = currentPage * employeesPerPage;
+  const indexOfFirstEmployee = indexOfLastEmployee - employeesPerPage;
+  const currentEmployees = filteredEmployees.slice(indexOfFirstEmployee, indexOfLastEmployee);
+
+  const nextPage = () => {
+    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
   };
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Cargando empleados...</p>
-        </div>
-      </div>
-    );
-  }
+  const prevPage = () => {
+    if (currentPage > 1) setCurrentPage(currentPage - 1);
+  };
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, typeFilter]);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-4xl font-bold text-foreground mb-2">Empleados</h1>
-          <p className="text-muted-foreground">
-            {filteredEmployees.length} {filteredEmployees.length === 1 ? 'empleado' : 'empleados'} encontrados
-          </p>
+          <p className="text-muted-foreground">Gestiona el personal de tu clínica dental</p>
         </div>
-        <Button className="bg-primary hover:bg-primary-hover text-primary-foreground">
+        <Button
+          className="bg-primary hover:bg-primary-hover text-primary-foreground"
+          onClick={() => setIsNewEmployeeDialogOpen(true)}
+        >
           <Plus className="h-4 w-4 mr-2" />
           Nuevo Empleado
         </Button>
       </div>
 
-      {/* Search Bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-        <Input
-          placeholder="Buscar empleados por nombre, DNI, teléfono o cargo..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
-        />
-      </div>
+      {/* Search and Filter Bar */}
+      <div className="space-y-4">
+        <div className="flex flex-col sm:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-muted-foreground" />
+            <Input
+              placeholder="Buscar por nombre, DNI, teléfono o cargo..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-2"
+          >
+            <Filter className="h-4 w-4" />
+            Filtros
+            {activeFiltersCount > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 w-5 p-0 flex items-center justify-center">
+                {activeFiltersCount}
+              </Badge>
+            )}
+          </Button>
+        </div>
 
-      {/* Employee Grid */}
-      <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-        {filteredEmployees.map((employee) => (
-          <Card key={employee.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-            <CardContent className="p-6">
-              <div className="flex items-start gap-4">
-                <img
-                  src={getProfileImage(employee)}
-                  alt={getFullName(employee)}
-                  className="w-16 h-16 rounded-full object-cover ring-2 ring-primary/10"
-                />
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-foreground text-lg truncate">
-                    {getFullName(employee)}
-                  </h3>
-                  <Badge variant="secondary" className="mt-1">
-                    {getRoleFromType(employee.tipo_empleado_id)}
-                  </Badge>
+        {/* Filtros Expandibles */}
+        {showFilters && (
+          <Card>
+            <CardContent className="p-4">
+              <div className="flex flex-col sm:flex-row gap-4 items-end">
+                <div className="flex-1 space-y-2">
+                  <label className="text-sm font-medium">Estado</label>
+                  <Select value={statusFilter} onValueChange={setStatusFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos los estados" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los estados</SelectItem>
+                      <SelectItem value="active">Activos</SelectItem>
+                      <SelectItem value="inactive">Inactivos</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              </div>
 
-              <div className="mt-4 space-y-3">
-                <div className="flex items-center gap-2 text-sm">
-                  <IdCard className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">DNI: {employee.dni_empleado}</span>
+                <div className="flex-1 space-y-2">
+                  <label className="text-sm font-medium">Tipo de Empleado</label>
+                  <Select value={typeFilter} onValueChange={setTypeFilter}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Todos los tipos" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">Todos los tipos</SelectItem>
+                      <SelectItem value="Dentista">Dentista</SelectItem>
+                      <SelectItem value="Asistente">Asistente Dental</SelectItem>
+                      <SelectItem value="Recepcionista">Recepcionista</SelectItem>
+                      <SelectItem value="Higienista">Higienista Dental</SelectItem>
+                      <SelectItem value="Administrativo">Administrativo</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <UserCheck className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">
-                    {employee.edad} años • {employee.genero}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Phone className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">{employee.numero_telefonico}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground truncate">{employee.direccion}</span>
-                </div>
-                <div className="flex items-center gap-2 text-sm">
-                  <Calendar className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-muted-foreground">Contratado: {employee.fecha_contratacion}</span>
-                </div>
-              </div>
 
-              <div className="mt-4 pt-4 border-t border-border flex justify-between items-center">
-                <div className="flex flex-col">
-                  <span className="text-xs text-success font-medium flex items-center gap-1">
-                    <span className="w-2 h-2 bg-success rounded-full"></span>
-                    {employee.active ? "Activo" : "Inactivo"}
-                  </span>
-                  <span className="text-sm font-semibold text-foreground mt-1">
-                    {formatSalary(employee.salario)}
-                  </span>
-                </div>
-                <Button variant="outline" size="sm">
-                  Ver Perfil
+                <Button
+                  variant="outline"
+                  onClick={clearFilters}
+                  disabled={activeFiltersCount === 0}
+                  className="flex items-center gap-2"
+                >
+                  <X className="h-4 w-4" />
+                  Limpiar
                 </Button>
               </div>
             </CardContent>
           </Card>
-        ))}
+        )}
       </div>
 
-      {filteredEmployees.length === 0 && !loading && (
-        <div className="text-center py-12">
-          <p className="text-muted-foreground">No se encontraron empleados</p>
+      {/* Stats */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm text-muted-foreground">Total Empleados</p>
+            <p className="text-2xl font-bold text-foreground mt-1">
+              {loading ? "..." : totalEmployees}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm text-muted-foreground">Empleados Activos</p>
+            <p className="text-2xl font-bold text-success mt-1">
+              {loading ? "..." : activeEmployees}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-sm text-muted-foreground">Resultados de Búsqueda</p>
+            <p className="text-2xl font-bold text-secondary mt-1">
+              {loading ? "..." : filteredEmployees.length}
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Loading State */}
+      {loading && (
+        <Card>
+          <CardContent className="p-12">
+            <div className="flex flex-col items-center justify-center gap-4">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="text-muted-foreground">Cargando empleados...</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Error State */}
+      {error && (
+        <Card className="border-destructive">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-destructive" />
+              <div>
+                <p className="font-semibold text-destructive">Error al cargar empleados</p>
+                <p className="text-sm text-muted-foreground mt-1">{error}</p>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={fetchEmployees}
+                className="ml-auto"
+              >
+                Reintentar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Empty State */}
+      {!loading && !error && employees.length === 0 && (
+        <Card>
+          <CardContent className="p-12">
+            <div className="flex flex-col items-center justify-center gap-4 text-center">
+              <Users className="h-12 w-12 text-muted-foreground" />
+              <div>
+                <p className="font-semibold text-foreground">No hay empleados registrados</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Comienza agregando tu primer empleado
+                </p>
+              </div>
+              <Button onClick={() => setIsNewEmployeeDialogOpen(true)}>
+                <Plus className="h-4 w-4 mr-2" />
+                Nuevo Empleado
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* No Results State */}
+      {!loading && !error && employees.length > 0 && filteredEmployees.length === 0 && (
+        <Card>
+          <CardContent className="p-12">
+            <div className="flex flex-col items-center justify-center gap-4 text-center">
+              <Search className="h-12 w-12 text-muted-foreground" />
+              <div>
+                <p className="font-semibold text-foreground">No se encontraron resultados</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Intenta ajustar los filtros de búsqueda
+                </p>
+              </div>
+              <Button variant="outline" onClick={clearFilters}>
+                Limpiar filtros
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Employee List */}
+      {!loading && !error && currentEmployees.length > 0 && (
+        <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+          {currentEmployees.map((employee) => (
+            <Card key={employee.id} className="overflow-hidden hover:shadow-lg transition-shadow">
+              <CardContent className="p-6">
+                <div className="flex items-start gap-4 mb-4">
+                  <div className="w-16 h-16 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                    <span className="text-xl font-bold text-primary">
+                      {employee.initials}
+                    </span>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-foreground text-lg truncate">
+                      {employee.fullName}
+                    </h3>
+                    <Badge variant="secondary" className="mt-1">
+                      {getRoleFromType(employee.tipo_empleado_id)}
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-2 text-sm">
+                    <IdCard className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">DNI: {employee.dni_empleado}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    <Phone className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">{employee.numero_telefonico}</span>
+                  </div>
+                  {employee.direccion && (
+                    <div className="flex items-center gap-2 text-sm">
+                      <MapPin className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-muted-foreground truncate">{employee.direccion}</span>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 text-sm">
+                    <Calendar className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">
+                      Contratado: {employee.fecha_contratacion}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-4 border-t border-border flex justify-between items-center">
+                  <div className="flex flex-col">
+                    <span className={`text-xs font-medium flex items-center gap-1 ${
+                      employee.activo ? 'text-success' : 'text-muted-foreground'
+                    }`}>
+                      <span className={`w-2 h-2 rounded-full ${
+                        employee.activo ? 'bg-success' : 'bg-muted-foreground'
+                      }`}></span>
+                      {employee.activo ? "Activo" : "Inactivo"}
+                    </span>
+                    <span className="text-sm font-semibold text-foreground mt-1">
+                      {formatSalary(employee.salario)}
+                    </span>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleEditEmployee(employee)}
+                    >
+                      <Edit className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setEmployeeToDelete(employee.id!);
+                        setIsDeleteDialogOpen(true);
+                      }}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
         </div>
       )}
+
+      {/* Paginación */}
+      {!loading && !error && totalPages > 1 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mt-6">
+          <div className="text-sm text-muted-foreground">
+            Mostrando {indexOfFirstEmployee + 1}-{Math.min(indexOfLastEmployee, filteredEmployees.length)} de {filteredEmployees.length} empleados
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={prevPage}
+              disabled={currentPage === 1}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+
+            <div className="flex gap-1">
+              {Array.from({ length: Math.min(totalPages, 5) }, (_, i) => {
+                let pageNumber;
+                if (totalPages <= 5) {
+                  pageNumber = i + 1;
+                } else if (currentPage <= 3) {
+                  pageNumber = i + 1;
+                } else if (currentPage >= totalPages - 2) {
+                  pageNumber = totalPages - 4 + i;
+                } else {
+                  pageNumber = currentPage - 2 + i;
+                }
+                return (
+                  <Button
+                    key={pageNumber}
+                    variant={currentPage === pageNumber ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setCurrentPage(pageNumber)}
+                    className="w-8 h-8 p-0"
+                  >
+                    {pageNumber}
+                  </Button>
+                );
+              })}
+            </div>
+
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={nextPage}
+              disabled={currentPage === totalPages}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2 text-sm">
+            <span>Por página:</span>
+            <Select
+              value={employeesPerPage.toString()}
+              onValueChange={(value) => {
+                setEmployeesPerPage(Number(value));
+                setCurrentPage(1);
+              }}
+            >
+              <SelectTrigger className="w-20">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="5">5</SelectItem>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="20">20</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+      )}
+
+      {/* Diálogos */}
+      <EmployeeDialog
+        open={isNewEmployeeDialogOpen}
+        onOpenChange={setIsNewEmployeeDialogOpen}
+        onSuccess={fetchEmployees}
+      />
+
+      <EmployeeEditDialog
+        open={isEditDialogOpen}
+        onOpenChange={setIsEditDialogOpen}
+        employee={selectedEmployee}
+        onSuccess={fetchEmployees}
+      />
+
+      <ConfirmationDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) setEmployeeToDelete(null);
+        }}
+        onConfirm={handleDeleteEmployee}
+        title="¿Eliminar empleado?"
+        description="Esta acción eliminará permanentemente el empleado del sistema. Esta acción no se puede deshacer."
+        confirmText="Eliminar"
+        cancelText="Cancelar"
+        variant="destructive"
+        loading={isDeleting}
+      />
     </div>
   );
 }
