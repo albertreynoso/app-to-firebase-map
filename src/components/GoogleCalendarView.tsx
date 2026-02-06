@@ -5,11 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   ChevronLeft,
   ChevronRight,
-  Search,
-  Settings,
-  HelpCircle,
   Plus,
-  Calendar as CalendarIcon
+  User,
+  Stethoscope,
 } from "lucide-react";
 import { format, addWeeks, subWeeks, startOfWeek, addDays, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
@@ -36,6 +34,44 @@ interface GoogleCalendarViewProps {
   onAppointmentClick: (appointment: Appointment) => void;
 }
 
+// ══════════ COLORES POR ESTADO ══════════
+const STATUS_COLORS: Record<string, string> = {
+  // Español
+  pendiente: "rgb(245, 158, 11)",   // Ámbar/Naranja (color principal)
+  confirmada: "#10B981",             // Verde
+  completada: "#6B7280",             // Gris
+  cancelada: "#EF4444",              // Rojo (no se muestra en calendario, pero por si acaso)
+  reprogramada: "#F97316",           // Naranja
+  // Inglés
+  pending: "rgb(245, 158, 11)",
+  confirmed: "#10B981",
+  completed: "#6B7280",
+  cancelled: "#EF4444",
+  reprogramed: "#F97316",
+};
+
+// Color por defecto (pendiente)
+const DEFAULT_COLOR = "rgb(245, 158, 11)";
+
+// Obtener color según estado de la cita
+const getStatusColor = (status: string): string => {
+  return STATUS_COLORS[status.toLowerCase()] || DEFAULT_COLOR;
+};
+
+// Mapeo de estado a label en español
+const STATUS_LABELS: Record<string, string> = {
+  confirmed: "Confirmada",
+  pending: "Pendiente",
+  completed: "Completada",
+  cancelled: "Cancelada",
+  reprogramed: "Reprogramada",
+  confirmada: "Confirmada",
+  pendiente: "Pendiente",
+  completada: "Completada",
+  cancelada: "Cancelada",
+  reprogramada: "Reprogramada",
+};
+
 export default function GoogleCalendarView({
   appointments,
   onSlotClick,
@@ -44,6 +80,14 @@ export default function GoogleCalendarView({
 }: GoogleCalendarViewProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [viewType, setViewType] = useState("week");
+  const [hoveredAppointmentId, setHoveredAppointmentId] = useState<string | null>(null);
+
+  // ══════════ FILTRAR CITAS CANCELADAS ══════════
+  // Las citas canceladas NO se muestran en el calendario
+  const visibleAppointments = appointments.filter(apt => {
+    const status = apt.status.toLowerCase();
+    return status !== "cancelada" && status !== "cancelled";
+  });
 
   // Generar horas de 7 AM a 8 PM
   const generateHours = () => {
@@ -74,7 +118,6 @@ export default function GoogleCalendarView({
   const getDateRange = () => {
     const start = weekDays[0];
     const end = weekDays[6];
-
     if (start.getMonth() === end.getMonth()) {
       return format(start, "MMMM yyyy", { locale: es });
     }
@@ -86,343 +129,105 @@ export default function GoogleCalendarView({
   const goToNextWeek = () => setCurrentDate(addWeeks(currentDate, 1));
   const goToToday = () => setCurrentDate(new Date());
 
-  // Verificar si es hoy
   const isToday = (date: Date) => isSameDay(date, new Date());
 
-  // Obtener citas para un slot específico
+  // Obtener citas para un slot horario específico (max 4)
   const getAppointmentsForSlot = (date: Date, time: string): Appointment[] => {
-    // Extraer la hora del slot (ej: "14:00" -> 14)
     const slotHour = parseInt(time.split(':')[0]);
-
-    return appointments.filter(apt => {
+    const slotAppointments = visibleAppointments.filter(apt => {
       if (!isSameDay(apt.date, date)) return false;
-
-      // Extraer la hora de la cita (ej: "14:30" -> 14)
       const aptHour = parseInt(apt.time.split(':')[0]);
-
-      // La cita pertenece a este slot si su hora coincide
       return aptHour === slotHour;
     });
+    return slotAppointments
+      .sort((a, b) => {
+        const minA = parseInt(a.time.split(':')[1] || '0');
+        const minB = parseInt(b.time.split(':')[1] || '0');
+        return minA - minB;
+      })
+      .slice(0, 4);
   };
 
   // Calcular altura del evento basado en duración real
+  // Cada hora = 144px → cada minuto = 2.4px
   const getEventHeight = (duration: string): number => {
     const minutes = parseInt(duration);
-    // Cada hora tiene 144px, entonces cada minuto = 144/60 = 2.4px
-    return (minutes / 60) * 144;
-  };
-
-  // Función para ordenar y posicionar citas por duración (superpuestas de izquierda a derecha)
-  const getAppointmentLayout = (appointments: Appointment[], allDayAppointments: Appointment[], currentSlotTime: string) => {
-    if (appointments.length === 0) return [];
-
-    // Definir tipo para citas con información de posición
-    type AppointmentWithPosition = {
-      appointment: Appointment;
-      topPosition: number;
-      bottomPosition: number;
-      height: number;
-      minutes: number;
-      duration: number;
-    };
-
-    // Calcular posición vertical real de cada cita basada en sus minutos
-    const appointmentsWithPosition: AppointmentWithPosition[] = appointments.map(apt => {
-      const minutes = parseInt(apt.time.split(':')[1] || '0');
-      const duration = parseInt(apt.duration);
-      const topPosition = minutes * 2.4;
-      const height = getEventHeight(apt.duration);
-      const bottomPosition = topPosition + height;
-
-      return {
-        appointment: apt,
-        topPosition,
-        bottomPosition,
-        height,
-        minutes,
-        duration
-      };
-    });
-
-    // Ordenar por minuto de inicio, luego por duración (menor primero)
-    const sorted = [...appointmentsWithPosition].sort((a, b) => {
-      if (a.minutes !== b.minutes) {
-        return a.minutes - b.minutes;
-      }
-      return a.duration - b.duration;
-    });
-
-    const result: any[] = [];
-
-    // Procesar cada cita individualmente
-    sorted.forEach((currentItem, currentIndex) => {
-
-      // PASO 1: Identificar todas las citas que empiezan al mismo minuto Y a la misma hora
-      const citasMismoMinuto = sorted.filter(item =>
-        item.minutes === currentItem.minutes &&
-        item.appointment.time.split(':')[0] === currentItem.appointment.time.split(':')[0]
-      );
-      const esCitaMismoMinuto = citasMismoMinuto.length > 1;
-
-      let finalWidth: number;
-      let finalOffsetLeft: number;
-      let finalZIndex: number;
-      let isTopMost: boolean;
-
-      if (esCitaMismoMinuto) {
-        // LÓGICA: Citas que empiezan al mismo tiempo
-        const indexEnGrupo = citasMismoMinuto.findIndex(item => item === currentItem);
-        const totalEnGrupo = citasMismoMinuto.length;
-
-        // IMPORTANTE: Verificar si hay otras citas (de otros horarios) superpuestas
-        const allDayWithPosition = allDayAppointments.map(apt => {
-          const minutes = parseInt(apt.time.split(':')[1] || '0');
-          const duration = parseInt(apt.duration);
-          return {
-            appointment: apt,
-            minutes,
-            duration
-          };
-        });
-
-        const citasSuperpuestas = allDayWithPosition.filter((otherItem) => {
-          // No comparar consigo misma ni con las del mismo grupo
-          if (otherItem.appointment.id === currentItem.appointment.id) return false;
-          const esMismoGrupo = citasMismoMinuto.some(c => c.appointment.id === otherItem.appointment.id);
-          if (esMismoGrupo) return false;
-
-          // Calcular superposición temporal REAL
-          const currentStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
-          const currentEndMinutes = currentStartMinutes + currentItem.duration;
-
-          const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
-          const otherEndMinutes = otherStartMinutes + otherItem.duration;
-
-          // Hay superposición REAL si:
-          // La otra cita empieza ANTES de que termine esta cita
-          // Y la otra cita termina DESPUÉS de que empieza esta cita
-          const haySuperposicion = otherStartMinutes < currentEndMinutes && otherEndMinutes > currentStartMinutes;
-
-          return haySuperposicion;
-        });
-
-        // Verificar si hay citas externas que se superponen con TODAS las citas del grupo
-        const citasExternasQueAfectanATodas = allDayWithPosition.filter((otherItem) => {
-          if (otherItem.appointment.id === currentItem.appointment.id) return false;
-          const esMismoGrupo = citasMismoMinuto.some(c => c.appointment.id === otherItem.appointment.id);
-          if (esMismoGrupo) return false;
-
-          // Verificar si esta cita externa se superpone con TODAS las citas del grupo
-          const seSuperponConTodas = citasMismoMinuto.every((citaGrupo) => {
-            const grupoStartMinutes = (parseInt(citaGrupo.appointment.time.split(':')[0]) * 60) + citaGrupo.minutes;
-            const grupoEndMinutes = grupoStartMinutes + citaGrupo.duration;
-
-            const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
-            const otherEndMinutes = otherStartMinutes + otherItem.duration;
-
-            return otherStartMinutes < grupoEndMinutes && otherEndMinutes > grupoStartMinutes;
-          });
-
-          return seSuperponConTodas;
-        });
-
-        const totalCitasAfectadas = citasExternasQueAfectanATodas.length;
-        const totalCitas = totalEnGrupo + totalCitasAfectadas;
-
-        // Calcular ancho basado en el total
-        if (totalCitas === 1) {
-          finalWidth = 90;
-          finalOffsetLeft = 0;
-        } else if (totalCitas === 2) {
-          finalWidth = 75;
-          finalOffsetLeft = indexEnGrupo * 25;
-        } else {
-          // 3 o más citas superpuestas
-          finalWidth = 60;
-          finalOffsetLeft = indexEnGrupo * 25;
-        }
-
-        // Z-index basado en tiempo relativo (valores bajos: 1-30)
-        const absoluteStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
-        // Normalizar a rango 1-30
-        finalZIndex = Math.floor((absoluteStartMinutes - 420) / 30) + 1 - indexEnGrupo;
-        isTopMost = indexEnGrupo === 0;
-      } else {
-        // NUEVA LÓGICA: Cita que empieza en un momento diferente
-
-        // Contar cuántas citas anteriores están todavía en proceso
-        // Contar cuántas citas anteriores están todavía en proceso
-        // Procesar TODAS las citas del día, no solo las del slot actual
-        const allDayWithPosition = allDayAppointments.map(apt => {
-          const minutes = parseInt(apt.time.split(':')[1] || '0');
-          const duration = parseInt(apt.duration);
-          return {
-            appointment: apt,
-            minutes,
-            duration
-          };
-        });
-
-        const citasEnProceso = allDayWithPosition.filter((otherItem) => {
-          // No comparar consigo misma
-          if (otherItem.appointment.id === currentItem.appointment.id) return false;
-
-          // Calcular tiempo de inicio y fin en minutos totales desde medianoche
-          const currentStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
-
-          const otherStartMinutes = (parseInt(otherItem.appointment.time.split(':')[0]) * 60) + otherItem.minutes;
-          const otherEndMinutes = otherStartMinutes + otherItem.duration;
-
-          // La cita está en proceso si:
-          // 1. Empieza antes que currentItem
-          // 2. Termina después de que empieza currentItem
-          return otherStartMinutes < currentStartMinutes && otherEndMinutes > currentStartMinutes;
-        });
-
-        const numEnProceso = citasEnProceso.length;
-
-        // Asignar ancho según cantidad de citas en proceso
-        // Las citas nuevas SIEMPRE empiezan desde la izquierda (offsetLeft = 0)
-        if (numEnProceso === 0) {
-          finalWidth = 90;
-          finalOffsetLeft = 0;
-        } else if (numEnProceso === 1) {
-          finalWidth = 75;
-          finalOffsetLeft = 0;
-        } else {
-          finalWidth = 60;
-          finalOffsetLeft = 0;
-        }
-
-        // Z-index basado en tiempo relativo (valores bajos: 1-30)
-        const absoluteStartMinutes = (parseInt(currentItem.appointment.time.split(':')[0]) * 60) + currentItem.minutes;
-        // Normalizar a rango 1-30
-        finalZIndex = Math.floor((absoluteStartMinutes - 420) / 30) + 1;
-
-        // Mostrar info si no hay otra cita posterior que se superponga
-        const hayCitaPosterior = sorted.some((otherItem, otherIndex) => {
-          if (otherIndex <= currentIndex) return false;
-
-          const seSuperponen = !(currentItem.bottomPosition <= otherItem.topPosition ||
-            otherItem.bottomPosition <= currentItem.topPosition);
-
-          return seSuperponen;
-        });
-
-        isTopMost = !hayCitaPosterior;
-      }
-
-      result.push({
-        appointment: currentItem.appointment,
-        height: currentItem.height,
-        offsetLeft: finalOffsetLeft,
-        offsetTop: 0,
-        width: finalWidth,
-        zIndex: finalZIndex,
-        isTopMost: isTopMost
-      });
-    });
-
-    return result;
-  };
-
-  // Función para calcular la posición vertical de múltiples citas
-  const getAppointmentPosition = (appointments: Appointment[], index: number): { top: number; height: number } => {
-    const slotHeight = 144; // Nueva altura del slot
-    const spacing = 4; // Espaciado entre citas
-    const appointmentCount = appointments.length;
-
-    if (appointmentCount === 1) {
-      return {
-        top: spacing,
-        height: Math.min(getEventHeight(appointments[0].duration), slotHeight - spacing * 2)
-      };
-    }
-
-    // Dividir el espacio disponible entre todas las citas
-    const availableHeight = slotHeight - (spacing * (appointmentCount + 1));
-    const heightPerAppointment = availableHeight / appointmentCount;
-
-    return {
-      top: spacing + (index * (heightPerAppointment + spacing)),
-      height: Math.min(heightPerAppointment, getEventHeight(appointments[index].duration))
-    };
-  };
-
-  // Función para obtener nombre y primer apellido
-  const getShortName = (fullName: string): string => {
-    if (!fullName) return "";
-
-    const parts = fullName.trim().split(" ");
-    if (parts.length === 1) return parts[0];
-    if (parts.length === 2) return `${parts[0]} ${parts[1]}`;
-
-    // Si tiene más de dos palabras, tomar el primer nombre y primer apellido
-    // Asumiendo que el último es apellido materno
-    const firstName = parts[0];
-    const lastName = parts[1]; // Primer apellido (apellido paterno)
-
-    return `${firstName} ${lastName}`;
+    return Math.max((minutes / 60) * 144, 18);
   };
 
   return (
-    <div className="flex flex-col h-full bg-background">
-      {/* Barra superior de navegación */}
-      <div className="flex items-center justify-between px-6 py-4 bg-card border-b">
-        <div className="flex items-center gap-4">
-          <CalendarIcon className="h-6 w-6 text-primary" />
-
+    <div className="h-full flex flex-col bg-background">
+      {/* ══════════ HEADER / TOOLBAR ══════════ */}
+      <div className="flex-shrink-0 border-b bg-card px-4 py-3 lg:px-6">
+        <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goToPreviousWeek}
-            >
-              <ChevronLeft className="h-5 w-5" />
+            <Button variant="outline" size="sm" onClick={goToToday} className="font-medium">
+              Hoy
             </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={goToNextWeek}
-            >
-              <ChevronRight className="h-5 w-5" />
-            </Button>
+            <div className="flex items-center">
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goToPreviousWeek}>
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8" onClick={goToNextWeek}>
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <h2 className="text-lg font-semibold capitalize text-foreground ml-2">
+              {getDateRange()}
+            </h2>
           </div>
 
-          <h2 className="text-xl font-medium text-foreground capitalize">
-            {getDateRange()}
-          </h2>
+          <div className="flex items-center gap-2">
+            <Select value={viewType} onValueChange={setViewType}>
+              <SelectTrigger className="w-[130px] h-8 text-sm">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="week">Semana</SelectItem>
+                <SelectItem value="day">Día</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button onClick={onNewAppointment} size="sm" className="gap-2">
+              <Plus className="h-4 w-4" />
+              <span className="hidden sm:inline">Nueva Cita</span>
+            </Button>
+          </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Button
-            className="ml-2"
-            onClick={onNewAppointment}
-          >
-            <Plus className="h-4 w-4 mr-2" />
-            Nueva Cita
-          </Button>
+        {/* ══════════ LEYENDA DE ESTADOS ══════════ */}
+        <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border/50">
+          {[
+            { label: "Pendiente", color: "rgb(245, 158, 11)" },
+            { label: "Confirmada", color: "#10B981" },
+            { label: "Completada", color: "#6B7280" },
+            { label: "Reprogramada", color: "#F97316" },
+          ].map((item) => (
+            <div key={item.label} className="flex items-center gap-1.5">
+              <div
+                className="w-3 h-3 rounded-sm"
+                style={{ backgroundColor: item.color }}
+              />
+              <span className="text-[11px] text-muted-foreground font-medium">
+                {item.label}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Vista semanal del calendario */}
-      <div className="flex-1 overflow-auto">
-        <div className="min-w-full h-full">
-          {/* Cabecera de días */}
-          <div className="grid grid-cols-[80px_repeat(7,1fr)] border-b sticky top-0 z-30 bg-background">
-            <div className="p-4 text-xs font-medium text-muted-foreground text-right pr-4 border-r">
-              GMT-05
-            </div>
+      {/* ══════════ CALENDAR GRID ══════════ */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        <div className="min-w-[800px]">
+          {/* Encabezado de días */}
+          <div className="grid grid-cols-[80px_repeat(7,1fr)] border-b bg-card sticky top-0 z-10">
+            <div className="p-3 border-r" />
             {weekDays.map((day, index) => {
               const dayName = format(day, "EEE", { locale: es }).toUpperCase();
               const dayNumber = format(day, "d");
               const todayClass = isToday(day) ? "text-primary" : "text-foreground";
 
               return (
-                <div
-                  key={index}
-                  className="p-4 text-center border-r last:border-r-0"
-                >
+                <div key={index} className="p-4 text-center border-r last:border-r-0">
                   <div className="text-xs font-medium text-muted-foreground mb-1">
                     {dayName}
                   </div>
@@ -440,7 +245,7 @@ export default function GoogleCalendarView({
             })}
           </div>
 
-          {/* Grid de horas y días */}
+          {/* ══════════ FILAS DE HORAS ══════════ */}
           <div className="relative">
             {hours.map((hour, hourIndex) => (
               <div
@@ -448,65 +253,133 @@ export default function GoogleCalendarView({
                 className="grid grid-cols-[80px_repeat(7,1fr)] border-b border-border/50"
                 style={{ height: '144px' }}
               >
+                {/* Label de hora */}
                 <div className="text-right pr-4 pt-1 text-xs text-muted-foreground border-r">
                   {hour.label}
                 </div>
 
+                {/* Celdas de cada día */}
                 {weekDays.map((day, dayIndex) => {
                   const slotAppointments = getAppointmentsForSlot(day, hour.time);
-                  // Obtener TODAS las citas del día para verificar citas en proceso
-                  const allDayAppointments = appointments.filter(apt => isSameDay(apt.date, day));
-                  const layout = getAppointmentLayout(slotAppointments, allDayAppointments, hour.time);
 
                   return (
                     <div
                       key={dayIndex}
-                      className="border-r last:border-r-0 relative hover:bg-accent/50 cursor-pointer transition-colors overflow-visible"
+                      className="border-r last:border-r-0 relative hover:bg-accent/30 cursor-pointer transition-colors"
                       onClick={() => onSlotClick(day, hour.time)}
                     >
-                      {layout.map(({ appointment: apt, height, offsetLeft, offsetTop, width, zIndex, isTopMost }) => (
-                        <div
-                          key={apt.id}
-                          className="absolute rounded-md shadow-lg overflow-hidden cursor-pointer hover:shadow-xl hover:brightness-110 transition-all group"
-                          style={{
-                            top: `${4 + offsetTop + (parseInt(apt.time.split(':')[1] || '0') * 2.4)}px`, // Posición según minutos
-                            left: `${4 + offsetLeft}px`,
-                            width: `${width}%`,
-                            height: `${height}px`,
-                            backgroundColor: apt.color,
-                            zIndex: zIndex,
-                            border: '2px solid rgba(255, 255, 255, 0.3)',
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onAppointmentClick(apt);
-                          }}
-                        >
-                          {/* Contenido visible solo en la cita superior (la más corta) */}
-                          {isTopMost ? (
-                            <div className="h-full flex flex-col justify-start p-[8px]">
-                              <div className="text-left w-full">
-                                <div className="text-white text-sm font-semibold leading-tight drop-shadow-md">
-                                  {apt.patient.split(" ").slice(0, 2).join(" ")}
-                                </div>
-                                <div className="text-white/95 text-xs truncate mt-1 drop-shadow-sm">
-                                  {apt.treatment}
-                                </div>
-                              </div>
-                            </div>
-                          ) : (
-                            // Sin texto para citas ocultas - completamente vacío
-                            <div className="h-full" />
-                          )}
+                      {/* ══════════ 4 COLUMNAS INVISIBLES ══════════ */}
+                      <div className="absolute inset-0 flex">
+                        {[0, 1, 2, 3].map((colIndex) => {
+                          const apt = slotAppointments[colIndex] || null;
+                          const isHovered = apt !== null && hoveredAppointmentId === apt.id;
+                          const aptColor = apt ? getStatusColor(apt.status) : DEFAULT_COLOR;
 
-                          {/* Badge de duración solo visible al hacer hover */}
-                          {!isTopMost && (
-                            <div className="absolute bottom-2 left-2 bg-black/60 text-white text-[9px] px-2 py-1 rounded-full font-medium opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm shadow-sm uppercase">
-                              ver
+                          return (
+                            <div
+                              key={colIndex}
+                              className="relative"
+                              style={{ width: '25%' }}
+                            >
+                              {apt && (
+                                <div
+                                  onMouseEnter={() => setHoveredAppointmentId(apt.id)}
+                                  onMouseLeave={() => setHoveredAppointmentId(null)}
+                                  className="absolute left-[2px] right-[2px]"
+                                  style={{
+                                    top: `${(parseInt(apt.time.split(':')[1] || '0') * 2.4) + 2}px`,
+                                  }}
+                                >
+                                  {/* ══════ BLOQUE DE CITA — color según estado ══════ */}
+                                  <div
+                                    className="rounded-md cursor-pointer transition-all duration-200"
+                                    style={{
+                                      height: `${getEventHeight(apt.duration)}px`,
+                                      backgroundColor: aptColor,
+                                      opacity: isHovered ? 1 : 0.8,
+                                      boxShadow: isHovered
+                                        ? `0 6px 20px -4px ${aptColor}80`
+                                        : `0 1px 3px ${aptColor}25`,
+                                      transform: isHovered ? 'scaleX(1.08)' : 'scaleX(1)',
+                                      zIndex: isHovered ? 40 : 1,
+                                      position: 'relative',
+                                    }}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      onAppointmentClick(apt);
+                                    }}
+                                  />
+
+                                  {/* ══════ TOOLTIP EN HOVER ══════ */}
+                                  {isHovered && (
+                                    <div
+                                      className="absolute z-50 pointer-events-none"
+                                      style={{
+                                        bottom: `${getEventHeight(apt.duration) + 8}px`,
+                                        left: '50%',
+                                        transform: 'translateX(-50%)',
+                                      }}
+                                    >
+                                      <div
+                                        className="bg-popover text-popover-foreground border border-border rounded-lg shadow-xl p-3 relative"
+                                        style={{ width: '230px' }}
+                                      >
+                                        {/* Flecha inferior */}
+                                        <div className="absolute -bottom-[5px] left-1/2 -translate-x-1/2 w-2.5 h-2.5 rotate-45 bg-popover border-r border-b border-border" />
+
+                                        {/* Nombre del paciente */}
+                                        <div className="flex items-center gap-2 mb-2.5 pb-2 border-b border-border/60">
+                                          <div
+                                            className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0"
+                                            style={{ backgroundColor: `${aptColor}1A` }}
+                                          >
+                                            <User className="h-3.5 w-3.5" style={{ color: aptColor }} />
+                                          </div>
+                                          <p className="font-semibold text-sm text-foreground truncate leading-tight">
+                                            {apt.patient}
+                                          </p>
+                                        </div>
+
+                                        {/* Consulta / Tratamiento */}
+                                        <div className="flex items-start gap-2 mb-2">
+                                          <Stethoscope
+                                            className="h-3.5 w-3.5 mt-0.5 flex-shrink-0"
+                                            style={{ color: aptColor }}
+                                          />
+                                          <div className="min-w-0">
+                                            <p className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold leading-tight">
+                                              Consulta / Tratamiento
+                                            </p>
+                                            <p className="text-xs font-medium text-foreground truncate mt-0.5">
+                                              {apt.treatment}
+                                            </p>
+                                          </div>
+                                        </div>
+
+                                        {/* Estado + Hora */}
+                                        <div className="flex items-center justify-between pt-2 border-t border-border/50">
+                                          <div className="flex items-center gap-1.5">
+                                            <div
+                                              className="w-2 h-2 rounded-full"
+                                              style={{ backgroundColor: aptColor }}
+                                            />
+                                            <span className="text-[11px] font-semibold" style={{ color: aptColor }}>
+                                              {STATUS_LABELS[apt.status] || apt.status}
+                                            </span>
+                                          </div>
+                                          <span className="text-[11px] text-muted-foreground font-medium">
+                                            {apt.time} · {apt.duration}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
-                      ))}
+                          );
+                        })}
+                      </div>
                     </div>
                   );
                 })}

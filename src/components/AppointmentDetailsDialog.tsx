@@ -8,22 +8,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   Calendar,
   Clock,
   User,
   FileText,
   Timer,
   XCircle,
-  UserCheck,
-  PlayCircle,
-  StopCircle,
+  Phone,
+  CalendarClock,
+  Edit,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -36,65 +29,42 @@ const APPOINTMENT_STATUS_CONFIG = {
   confirmada: {
     label: "Confirmada",
     color: "bg-green-500",
-    textColor: "text-green-700",
-    bgLight: "bg-green-50",
-    borderColor: "border-green-200",
   },
   pendiente: {
     label: "Pendiente",
     color: "bg-yellow-500",
-    textColor: "text-yellow-700",
-    bgLight: "bg-yellow-50",
-    borderColor: "border-yellow-200",
   },
   completada: {
     label: "Completada",
     color: "bg-gray-500",
-    textColor: "text-gray-700",
-    bgLight: "bg-gray-50",
-    borderColor: "border-gray-200",
   },
   cancelada: {
     label: "Cancelada",
     color: "bg-red-500",
-    textColor: "text-red-700",
-    bgLight: "bg-red-50",
-    borderColor: "border-red-200",
   },
   reprogramada: {
     label: "Reprogramada",
     color: "bg-orange-500",
-    textColor: "text-orange-700",
-    bgLight: "bg-orange-50",
-    borderColor: "border-orange-200",
   },
   confirmed: {
     label: "Confirmada",
     color: "bg-green-500",
-    textColor: "text-green-700",
-    bgLight: "bg-green-50",
-    borderColor: "border-green-200",
   },
   pending: {
     label: "Pendiente",
     color: "bg-yellow-500",
-    textColor: "text-yellow-700",
-    bgLight: "bg-yellow-50",
-    borderColor: "border-yellow-200",
   },
   completed: {
     label: "Completada",
     color: "bg-gray-500",
-    textColor: "text-gray-700",
-    bgLight: "bg-gray-50",
-    borderColor: "border-gray-200",
   },
   cancelled: {
     label: "Cancelada",
     color: "bg-red-500",
-    textColor: "text-red-700",
-    bgLight: "bg-red-50",
-    borderColor: "border-red-200",
+  },
+  reprogramed: {
+    label: "Reprogramada",
+    color: "bg-orange-500",
   },
 } as const;
 
@@ -103,18 +73,11 @@ interface AppointmentDetails {
   time: string;
   patient: string;
   patientId: string;
-  dentist?: string;
-  dentistId?: string;
+  patientPhone?: string;
   treatment: string;
   duration: string;
-  status: string; // Acepta tanto español como inglés
+  status: string;
   date: Date;
-  notes?: string;
-  color?: string;
-  atendido_por?: string;
-  duracion_real?: string;
-  hora_inicio_atencion?: string;
-  hora_fin_atencion?: string;
 }
 
 interface AppointmentDetailsDialogProps {
@@ -122,6 +85,7 @@ interface AppointmentDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
   appointment: AppointmentDetails | null;
   onEdit?: () => void;
+  onReschedule?: () => void;
   onSuccess?: () => void;
 }
 
@@ -130,10 +94,12 @@ export default function AppointmentDetailsDialog({
   onOpenChange,
   appointment,
   onEdit,
+  onReschedule,
   onSuccess,
 }: AppointmentDetailsDialogProps) {
   const [selectedStatus, setSelectedStatus] = useState<string>("");
   const [updatingStatus, setUpdatingStatus] = useState(false);
+  const [showCancelDialog, setShowCancelDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
@@ -142,21 +108,10 @@ export default function AppointmentDetailsDialog({
     if (appointment && open) {
       const normalized = normalizeStatus(appointment.status);
       setSelectedStatus(normalized);
-      console.log("🔄 Estado normalizado:", appointment.status, "->", normalized);
     }
   }, [appointment, open]);
 
-  // Debug: ver qué datos llegan
-  useEffect(() => {
-    if (open && appointment) {
-      console.log("📋 Datos de la cita:", appointment);
-    }
-  }, [open, appointment]);
-
-  if (!appointment) {
-    console.log("⚠️ No hay appointment data");
-    return null;
-  }
+  if (!appointment) return null;
 
   // Normalizar estado a español
   const normalizeStatus = (status: string): string => {
@@ -165,6 +120,7 @@ export default function AppointmentDetailsDialog({
       'pending': 'pendiente', 
       'completed': 'completada',
       'cancelled': 'cancelada',
+      'reprogramed': 'reprogramada',
       'confirmada': 'confirmada',
       'pendiente': 'pendiente',
       'completada': 'completada',
@@ -175,10 +131,17 @@ export default function AppointmentDetailsDialog({
   };
 
   const currentStatus = normalizeStatus(selectedStatus || appointment.status);
+  const isRescheduled = currentStatus === "reprogramada";
 
   const handleStatusChange = async (newStatus: string) => {
     if (!appointment?.id) {
       console.error("❌ No hay ID de cita para actualizar");
+      return;
+    }
+
+    // Si selecciona "cancelada", mostrar modal de confirmación
+    if (newStatus === "cancelada") {
+      setShowCancelDialog(true);
       return;
     }
 
@@ -191,7 +154,6 @@ export default function AppointmentDetailsDialog({
         estadoNuevo: newStatus
       });
 
-      // Actualizar en Firebase
       await updateAppointment(appointment.id, {
         estado: newStatus as any,
       });
@@ -205,22 +167,53 @@ export default function AppointmentDetailsDialog({
         description: `La cita ha sido marcada como ${statusLabel.toLowerCase()}.`,
       });
 
-      // IMPORTANTE: Cerrar el modal y recargar
-      console.log("🔄 Cerrando modal y recargando calendario...");
-      onOpenChange(false); // Cerrar el modal
+      // Cerrar el modal inmediatamente
+      onOpenChange(false);
       
+      // Recargar el calendario
       if (onSuccess) {
-        await onSuccess(); // Recargar el calendario
-        console.log("✅ Calendario recargado");
+        await onSuccess();
       }
 
     } catch (error: any) {
-      console.error("❌ Error completo al actualizar estado:", error);
-      console.error("❌ Stack:", error.stack);
+      console.error("❌ Error al actualizar estado:", error);
       
       toast({
         title: "❌ Error",
         description: error.message || "No se pudo actualizar el estado de la cita.",
+        variant: "destructive",
+      });
+    } finally {
+      setUpdatingStatus(false);
+    }
+  };
+
+  const handleConfirmCancellation = async () => {
+    try {
+      setUpdatingStatus(true);
+      
+      await updateAppointment(appointment.id, {
+        estado: "cancelada" as any,
+      });
+
+      toast({
+        title: "✅ Cita cancelada",
+        description: "La cita ha sido cancelada exitosamente.",
+      });
+
+      setShowCancelDialog(false);
+      onOpenChange(false);
+      
+      if (onSuccess) {
+        await onSuccess();
+      }
+
+    } catch (error: any) {
+      console.error("❌ Error al cancelar cita:", error);
+      
+      toast({
+        title: "❌ Error",
+        description: "No se pudo cancelar la cita.",
         variant: "destructive",
       });
     } finally {
@@ -256,182 +249,242 @@ export default function AppointmentDetailsDialog({
 
   const statusConfig = APPOINTMENT_STATUS_CONFIG[currentStatus as keyof typeof APPOINTMENT_STATUS_CONFIG] || APPOINTMENT_STATUS_CONFIG.pendiente;
 
-  // Validar que date sea una fecha válida
   const appointmentDate = appointment.date instanceof Date ? appointment.date : new Date(appointment.date);
+
+  // Determinar color del borde según estado
+  const getBorderColor = () => {
+    switch (currentStatus) {
+      case "pendiente": return "#eab308";
+      case "confirmada": return "#22c55e";
+      case "completada": return "#6b7280";
+      case "cancelada": return "#ef4444";
+      case "reprogramada": return "#f97316";
+      default: return "#6b7280";
+    }
+  };
 
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <div className="flex items-start justify-between gap-4">
-              <DialogTitle className="text-2xl font-semibold">
+            <div className="flex items-center justify-between gap-4 pb-4 border-b-2" 
+                 style={{ borderColor: getBorderColor() }}>
+              <DialogTitle className="text-xl font-semibold">
                 Detalles de la Cita
               </DialogTitle>
               
-              <Select
-                value={currentStatus}
-                onValueChange={handleStatusChange}
-                disabled={updatingStatus}
-              >
-                <SelectTrigger className="w-[180px]">
-                  <SelectValue>
-                    <Badge className={`${statusConfig.color} text-white`}>
-                      {statusConfig.label}
-                    </Badge>
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="confirmada">
-                    <Badge className="bg-green-500 text-white">Confirmada</Badge>
-                  </SelectItem>
-                  <SelectItem value="pendiente">
-                    <Badge className="bg-yellow-500 text-white">Pendiente</Badge>
-                  </SelectItem>
-                  <SelectItem value="completada">
-                    <Badge className="bg-gray-500 text-white">Completada</Badge>
-                  </SelectItem>
-                  <SelectItem value="cancelada">
-                    <Badge className="bg-red-500 text-white">Cancelada</Badge>
-                  </SelectItem>
-                  <SelectItem value="reprogramada">
-                    <Badge className="bg-orange-500 text-white">Reprogramada</Badge>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2">
+                <Badge className={`${statusConfig.color} text-white pointer-events-none`}>
+                  {statusConfig.label}
+                </Badge>
+                
+                <button
+                  onClick={() => onOpenChange(false)}
+                  className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
+                >
+                  <XCircle className="h-5 w-5" />
+                  <span className="sr-only">Cerrar</span>
+                </button>
+              </div>
             </div>
           </DialogHeader>
 
-          <div className="space-y-6 py-4">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex items-start gap-3 p-4 border rounded-lg bg-muted/50">
-                <Calendar className="h-5 w-5 text-primary mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Fecha</p>
-                  <p className="text-lg font-semibold">
-                    {format(appointmentDate, "PPP", { locale: es })}
-                  </p>
+          <div className="space-y-4 py-2">
+            {/* Información de la cita */}
+            <div className="space-y-3">
+              {/* Fecha y Hora */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
+                  <Calendar className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">FECHA</p>
+                    <p className="text-sm font-semibold">
+                      {format(appointmentDate, "PPP", { locale: es })}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
+                  <Clock className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">HORA</p>
+                    <p className="text-sm font-semibold">{appointment.time}</p>
+                  </div>
                 </div>
               </div>
 
-              <div className="flex items-start gap-3 p-4 border rounded-lg bg-muted/50">
-                <Clock className="h-5 w-5 text-primary mt-0.5" />
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Hora</p>
-                  <p className="text-lg font-semibold">{appointment.time}</p>
+              {/* Nombre completo y Celular */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 p-3 border rounded-lg">
+                  <User className="h-4 w-4 text-primary" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground">PACIENTE</p>
+                    <p className="text-sm font-semibold truncate">{appointment.patient}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 border rounded-lg">
+                  <Phone className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">CELULAR</p>
+                    <p className="text-sm font-semibold">
+                      {appointment.patientPhone || "No registrado"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Tipo de Consulta y Duración */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex items-center gap-3 p-3 border rounded-lg">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-muted-foreground">TIPO CONSULTA</p>
+                    <p className="text-sm font-semibold truncate">{appointment.treatment}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 border rounded-lg">
+                  <Timer className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">DURACIÓN EST.</p>
+                    <p className="text-sm font-semibold">{appointment.duration}</p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="flex items-start gap-3 p-4 border rounded-lg">
-              <User className="h-5 w-5 text-primary mt-0.5" />
-              <div className="flex-1">
-                <p className="text-sm font-medium text-muted-foreground">Paciente</p>
-                <p className="text-lg font-semibold">{appointment.patient}</p>
-                <p className="text-sm text-muted-foreground">ID: {appointment.patientId}</p>
-              </div>
-            </div>
+            {/* Selector de Estado - SOLO SI NO ESTÁ REPROGRAMADA */}
+            {!isRescheduled && (
+              <div className="space-y-2 pt-2">
+                <label className="text-xs font-medium text-muted-foreground uppercase">
+                  Cambiar Estado
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {/* Pendiente */}
+                  <button
+                    onClick={() => handleStatusChange("pendiente")}
+                    disabled={updatingStatus}
+                    className={`
+                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
+                      ${currentStatus === "pendiente" 
+                        ? "bg-yellow-500/10 border-yellow-500" 
+                        : "bg-gray-100 border-gray-300 hover:border-gray-400"
+                      }
+                    `}
+                  >
+                    <span className="h-2 w-2 rounded-full bg-yellow-500" />
+                    <span className="text-sm font-medium text-yellow-600">
+                      Pendiente
+                    </span>
+                  </button>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="flex items-start gap-3 p-4 border rounded-lg">
-                <FileText className="h-5 w-5 text-primary mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-muted-foreground">Tipo de Consulta</p>
-                  <p className="text-base font-semibold">{appointment.treatment}</p>
-                </div>
-              </div>
+                  {/* Confirmada */}
+                  <button
+                    onClick={() => handleStatusChange("confirmada")}
+                    disabled={updatingStatus}
+                    className={`
+                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
+                      ${currentStatus === "confirmada" 
+                        ? "bg-green-500/10 border-green-500" 
+                        : "bg-gray-100 border-gray-300 hover:border-gray-400"
+                      }
+                    `}
+                  >
+                    <span className="h-2 w-2 rounded-full bg-green-500" />
+                    <span className="text-sm font-medium text-green-600">
+                      Confirmada
+                    </span>
+                  </button>
 
-              <div className="flex items-start gap-3 p-4 border rounded-lg">
-                <Timer className="h-5 w-5 text-primary mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-muted-foreground">Duración Estimada</p>
-                  <p className="text-base font-semibold">{appointment.duration}</p>
-                </div>
-              </div>
-            </div>
-
-            <div className={`p-4 border rounded-lg ${statusConfig.bgLight} ${statusConfig.borderColor}`}>
-              <h4 className="font-semibold mb-3 flex items-center gap-2">
-                <UserCheck className="h-5 w-5" />
-                Información de Atención
-              </h4>
-              
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Atendido por</p>
-                  <p className="text-sm font-medium">
-                    {appointment.atendido_por || "Sin asignar"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">Duración Real</p>
-                  <p className="text-sm font-medium">
-                    {appointment.duracion_real || "Pendiente"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    <PlayCircle className="h-3 w-3" />
-                    Inicio de Atención
-                  </p>
-                  <p className="text-sm font-medium">
-                    {appointment.hora_inicio_atencion || "Pendiente"}
-                  </p>
-                </div>
-
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1 flex items-center gap-1">
-                    <StopCircle className="h-3 w-3" />
-                    Fin de Atención
-                  </p>
-                  <p className="text-sm font-medium">
-                    {appointment.hora_fin_atencion || "Pendiente"}
-                  </p>
-                </div>
-              </div>
-
-              <p className="text-xs text-muted-foreground mt-3 italic">
-                * Esta información se editará una vez completada la atención
-              </p>
-            </div>
-
-            {appointment.notes && (
-              <div className="flex items-start gap-3 p-4 border rounded-lg bg-muted/30">
-                <FileText className="h-5 w-5 text-primary mt-0.5" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium text-muted-foreground mb-2">
-                    Notas y Observaciones
-                  </p>
-                  <p className="text-sm whitespace-pre-wrap">{appointment.notes}</p>
+                  {/* Cancelada */}
+                  <button
+                    onClick={() => handleStatusChange("cancelada")}
+                    disabled={updatingStatus}
+                    className={`
+                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
+                      ${currentStatus === "cancelada" 
+                        ? "bg-red-500/10 border-red-500" 
+                        : "bg-gray-100 border-gray-300 hover:border-gray-400"
+                      }
+                    `}
+                  >
+                    <span className="h-2 w-2 rounded-full bg-red-500" />
+                    <span className="text-sm font-medium text-red-600">
+                      Cancelada
+                    </span>
+                  </button>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Botones de acción */}
           <div className="flex justify-between items-center pt-4 border-t">
-            {currentStatus !== "completada" && currentStatus !== "cancelada" && currentStatus !== "completed" && currentStatus !== "cancelled" && (
+            {/* Botón izquierdo */}
+            {isRescheduled ? (
+              // Si está reprogramada: mostrar "Cancelar Cita"
               <Button
                 variant="destructive"
-                onClick={() => setShowDeleteDialog(true)}
+                onClick={() => setShowCancelDialog(true)}
               >
                 <XCircle className="h-4 w-4 mr-2" />
-                Eliminar Cita
+                Cancelar Cita
               </Button>
+            ) : (
+              // Si NO está reprogramada: mostrar "Eliminar Cita" (solo si no está completada ni cancelada)
+              currentStatus !== "completada" && currentStatus !== "cancelada" && (
+                <Button
+                  variant="destructive"
+                  onClick={() => setShowDeleteDialog(true)}
+                >
+                  <XCircle className="h-4 w-4 mr-2" />
+                  Eliminar Cita
+                </Button>
+              )
             )}
 
             <div className="flex-1" />
 
-            {onEdit && currentStatus !== "completada" && currentStatus !== "cancelada" && currentStatus !== "completed" && currentStatus !== "cancelled" && (
-              <Button onClick={onEdit}>
-                Editar Cita
-              </Button>
-            )}
+            {/* Botones Editar y Reprogramar - Derecha */}
+            <div className="flex gap-2">
+              {onEdit && currentStatus !== "completada" && currentStatus !== "cancelada" && (
+                <Button onClick={onEdit} variant="outline">
+                  <Edit className="h-4 w-4 mr-2" />
+                  Editar
+                </Button>
+              )}
+
+              {/* Reprogramar - Solo si estado es pendiente Y NO está reprogramada */}
+              {currentStatus === "pendiente" && !isRescheduled && onReschedule && (
+                <Button
+                  onClick={onReschedule}
+                  className="bg-yellow-500 hover:bg-yellow-600 text-white"
+                >
+                  <CalendarClock className="h-4 w-4 mr-2" />
+                  Reprogramar
+                </Button>
+              )}
+            </div>
           </div>
         </DialogContent>
       </Dialog>
 
+      {/* Modal de confirmación para CANCELAR cita */}
+      <ConfirmationDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        onConfirm={handleConfirmCancellation}
+        title="¿Cancelar esta cita?"
+        description={`¿Estás seguro de que deseas cancelar la cita de ${appointment.patient} programada para el ${format(appointmentDate, "PPP", { locale: es })} a las ${appointment.time}?`}
+        confirmText="Sí, cancelar cita"
+        cancelText="No, mantener cita"
+        variant="destructive"
+        loading={updatingStatus}
+      />
+
+      {/* Modal de confirmación para ELIMINAR cita */}
       <ConfirmationDialog
         open={showDeleteDialog}
         onOpenChange={setShowDeleteDialog}

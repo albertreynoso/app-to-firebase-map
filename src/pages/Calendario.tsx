@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 import AppointmentDetailsDialog from "@/components/AppointmentDetailsDialog";
 import AppointmentEditDialog from "@/components/AppointmentEditDialog";
 import { getAppointmentColor } from "@/types/appointment";
+import AppointmentRescheduleDialog from "@/components/AppointmentRescheduleDialog";
 
 // Interfaz para las citas que usa GoogleCalendarView
 interface CalendarAppointment {
@@ -51,7 +52,7 @@ export default function Calendario() {
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [selectedAppointment, setSelectedAppointment] = useState<CalendarAppointment | null>(null);
   const [showEditModal, setShowEditModal] = useState(false);
-
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false); // ← NUEVO
   // Convertir las citas de Firebase al formato que espera GoogleCalendarView
   const formattedAppointments: CalendarAppointment[] = appointments.map(apt => ({
     id: apt.id || "",
@@ -92,50 +93,56 @@ export default function Calendario() {
     setShowEditModal(true);
   };
 
+  // Manejo de reprogramación de cita
+  const handleRescheduleAppointment = () => {
+    setShowDetailsModal(false);
+    setShowRescheduleModal(true);
+  };
+
   // Callback cuando se actualiza/cancela una cita
-const handleDetailsSuccess = async () => {
-  console.log("🔄 handleDetailsSuccess: Iniciando recarga...");
-  
-  // Recargar las citas PRIMERO
-  try {
-    const updatedAppointments = await refetch();
-    console.log("✅ handleDetailsSuccess: Citas recargadas exitosamente");
-    
-    // Si hay una cita seleccionada, buscar la versión actualizada
-    if (selectedAppointment?.id && updatedAppointments) {
-      const updatedAppointment = updatedAppointments.find(
-        apt => apt.id === selectedAppointment.id
-      );
-      
-      if (updatedAppointment) {
-        // Convertir al formato CalendarAppointment con datos FRESCOS
-        const refreshedAppointment: CalendarAppointment = {
-          id: updatedAppointment.id || "",
-          time: updatedAppointment.hora,
-          patient: updatedAppointment.paciente_nombre,
-          patientId: updatedAppointment.paciente_id,
-          dentist: updatedAppointment.atendido_por || "Por asignar",
-          dentistId: "D001",
-          treatment: updatedAppointment.tipo_consulta,
-          duration: `${updatedAppointment.duracion} min`, // ⚠️ DURACIÓN ACTUALIZADA
-          status: normalizeStatusToEnglish(updatedAppointment.estado),
-          date: updatedAppointment.fecha,
-          notes: updatedAppointment.notas_observaciones,
-          color: getAppointmentColor(updatedAppointment.estado),
-        };
-        
-        setSelectedAppointment(refreshedAppointment);
-        console.log("✅ Cita actualizada con nueva duración:", refreshedAppointment.duration);
-      } else {
-        // Si la cita ya no existe (fue eliminada), limpiar selección
-        setSelectedAppointment(null);
-        setShowDetailsModal(false);
+  const handleDetailsSuccess = async () => {
+    console.log("🔄 handleDetailsSuccess: Iniciando recarga...");
+
+    // Recargar las citas PRIMERO
+    try {
+      const updatedAppointments = await refetch();
+      console.log("✅ handleDetailsSuccess: Citas recargadas exitosamente");
+
+      // Si hay una cita seleccionada, buscar la versión actualizada
+      if (selectedAppointment?.id && updatedAppointments) {
+        const updatedAppointment = updatedAppointments.find(
+          apt => apt.id === selectedAppointment.id
+        );
+
+        if (updatedAppointment) {
+          // Convertir al formato CalendarAppointment con datos FRESCOS
+          const refreshedAppointment: CalendarAppointment = {
+            id: updatedAppointment.id || "",
+            time: updatedAppointment.hora,
+            patient: updatedAppointment.paciente_nombre,
+            patientId: updatedAppointment.paciente_id,
+            dentist: updatedAppointment.atendido_por || "Por asignar",
+            dentistId: "D001",
+            treatment: updatedAppointment.tipo_consulta,
+            duration: `${updatedAppointment.duracion} min`, // ⚠️ DURACIÓN ACTUALIZADA
+            status: normalizeStatusToEnglish(updatedAppointment.estado),
+            date: updatedAppointment.fecha,
+            notes: updatedAppointment.notas_observaciones,
+            color: getAppointmentColor(updatedAppointment.estado),
+          };
+
+          setSelectedAppointment(refreshedAppointment);
+          console.log("✅ Cita actualizada con nueva duración:", refreshedAppointment.duration);
+        } else {
+          // Si la cita ya no existe (fue eliminada), limpiar selección
+          setSelectedAppointment(null);
+          setShowDetailsModal(false);
+        }
       }
+    } catch (error) {
+      console.error("❌ Error al recargar citas:", error);
     }
-  } catch (error) {
-    console.error("❌ Error al recargar citas:", error);
-  }
-};
+  };
 
   if (loading) {
     return (
@@ -178,6 +185,7 @@ const handleDetailsSuccess = async () => {
         onOpenChange={setShowDetailsModal}
         appointment={selectedAppointment}
         onEdit={handleEditAppointment}
+        onReschedule={handleRescheduleAppointment}
         onSuccess={handleDetailsSuccess}
       />
 
@@ -189,6 +197,19 @@ const handleDetailsSuccess = async () => {
         onSuccess={() => {
           refetch();
           setShowEditModal(false);
+          setSelectedAppointment(null);
+        }}
+      />
+
+
+      {/* Modal de Reprogramación de Cita */}
+      <AppointmentRescheduleDialog
+        open={showRescheduleModal}
+        onOpenChange={setShowRescheduleModal}
+        appointment={selectedAppointment}
+        onSuccess={() => {
+          refetch();
+          setShowRescheduleModal(false);
           setSelectedAppointment(null);
         }}
       />

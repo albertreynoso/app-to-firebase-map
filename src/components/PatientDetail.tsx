@@ -36,6 +36,7 @@ import TreatmentDialog from "./TreatmentDialog";
 import TreatmentEditDialog from "./TreatmentEditDialog";
 import ConfirmationDialog from "./ConfirmationDialog";
 import PaymentDialog from "./PaymentDialog";
+import MovimientosRecientes from "./RecentMovementsDialog";
 
 interface PatientWithStats extends Patient {
   fullName: string;
@@ -1178,8 +1179,9 @@ export default function PacienteDetalle() {
         <Separator className="my-6" />
 
         <Tabs defaultValue="general" className="w-full">
-          <TabsList className="grid w-full grid-cols-3 mb-6">
+          <TabsList className="grid w-full grid-cols-4 mb-6">
             <TabsTrigger value="general">Información General</TabsTrigger>
+            <TabsTrigger value="movimientos">Historial</TabsTrigger>
             <TabsTrigger value="treatments">Tratamientos</TabsTrigger>
             <TabsTrigger value="financial">Finanzas</TabsTrigger>
           </TabsList>
@@ -1353,6 +1355,15 @@ export default function PacienteDetalle() {
             </div>
           </TabsContent>
 
+          <TabsContent value="movimientos">
+            <MovimientosRecientes
+              appointments={appointments}
+              pagos={pagos}
+              loadingAppointments={loadingAppointments}
+              loadingPagos={loadingPagos}
+            />
+          </TabsContent>
+
           <TabsContent value="treatments">
             <TreatmentsTab />
           </TabsContent>
@@ -1360,6 +1371,7 @@ export default function PacienteDetalle() {
           <TabsContent value="financial">
             <FinancialTab />
           </TabsContent>
+
         </Tabs>
       </div>
 

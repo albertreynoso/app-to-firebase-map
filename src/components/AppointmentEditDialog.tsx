@@ -120,15 +120,19 @@ export default function AppointmentEditDialog({
             'pending': 'pendiente',
             'completed': 'completada',
             'cancelled': 'cancelada',
+            'reprogramed': 'reprogramada',
         };
         return statusMap[status?.toLowerCase()] || status;
     };
+
+    // Verificar si la cita está reprogramada
+    const isRescheduled = appointment ? normalizeStatus(appointment.status) === "reprogramada" : false;
 
     // Cargar datos cuando se abre el diálogo
     useEffect(() => {
         if (open && appointment) {
             console.log("📝 Cargando datos para editar:", appointment);
-            
+
             // Extraer duración numérica
             const durationMatch = appointment.duration.match(/\d+/);
             const durationValue = durationMatch ? durationMatch[0] : "30";
@@ -171,7 +175,7 @@ export default function AppointmentEditDialog({
         }
 
         setLoading(true);
-        
+
         try {
             console.log("📝 Iniciando actualización de cita:", appointment.id);
             console.log("📊 Datos del formulario:", data);
@@ -198,7 +202,7 @@ export default function AppointmentEditDialog({
             });
 
             onOpenChange(false);
-            
+
             // Esperar un momento antes de recargar para que Firebase procese
             setTimeout(() => {
                 onSuccess?.();
@@ -207,7 +211,7 @@ export default function AppointmentEditDialog({
         } catch (error: any) {
             console.error("❌ Error completo al actualizar:", error);
             console.error("❌ Stack:", error.stack);
-            
+
             toast({
                 title: "❌ Error al actualizar",
                 description: error.message || "No se pudieron guardar los cambios. Revisa la consola.",
@@ -225,37 +229,39 @@ export default function AppointmentEditDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="max-w-2xl">
                 <DialogHeader>
-                    <DialogTitle className="text-2xl font-semibold">
-                        Editar Cita - {appointment.patient}
+                    <DialogTitle className="text-xl font-semibold">
+                        Editar Cita
                     </DialogTitle>
                 </DialogHeader>
 
                 <Form {...form}>
-                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                        {/* Información del Paciente */}
-                        <div className="p-4 bg-muted/50 rounded-lg border">
-                            <p className="text-sm font-medium text-muted-foreground mb-1">Paciente</p>
-                            <p className="text-lg font-semibold">{appointment.patient}</p>
+                    <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+                        {/* Información del Paciente - Una sola fila */}
+                        <div className="p-3 bg-muted/50 rounded-lg border">
+                            <p className="text-xs font-medium text-muted-foreground mb-1">Paciente</p>
+                            <p className="text-base font-semibold">{appointment.patient}</p>
                         </div>
 
                         {/* Fecha y Hora */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-2 gap-3">
                             <FormField
                                 control={form.control}
                                 name="date"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Fecha de la Cita *</FormLabel>
+                                        <FormLabel className="text-sm">Fecha de la Cita *</FormLabel>
                                         <Popover>
                                             <PopoverTrigger asChild>
                                                 <FormControl>
                                                     <Button
                                                         variant="outline"
+                                                        disabled={isRescheduled}
                                                         className={cn(
-                                                            "w-full pl-3 text-left font-normal",
-                                                            !field.value && "text-muted-foreground"
+                                                            "w-full pl-3 text-left font-normal h-10",
+                                                            !field.value && "text-muted-foreground",
+                                                            isRescheduled && "opacity-60 cursor-not-allowed"
                                                         )}
                                                     >
                                                         {field.value ? (
@@ -267,16 +273,18 @@ export default function AppointmentEditDialog({
                                                     </Button>
                                                 </FormControl>
                                             </PopoverTrigger>
-                                            <PopoverContent className="w-auto p-0" align="start">
-                                                <Calendar
-                                                    mode="single"
-                                                    selected={field.value}
-                                                    onSelect={field.onChange}
-                                                    disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
-                                                    initialFocus
-                                                    locale={es}
-                                                />
-                                            </PopoverContent>
+                                            {!isRescheduled && (
+                                                <PopoverContent className="w-auto p-0" align="start">
+                                                    <Calendar
+                                                        mode="single"
+                                                        selected={field.value}
+                                                        onSelect={field.onChange}
+                                                        disabled={(date) => date < new Date(new Date().setHours(0, 0, 0, 0))}
+                                                        initialFocus
+                                                        locale={es}
+                                                    />
+                                                </PopoverContent>
+                                            )}
                                         </Popover>
                                         <FormMessage />
                                     </FormItem>
@@ -288,10 +296,19 @@ export default function AppointmentEditDialog({
                                 name="time"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Hora *</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormLabel className="text-sm">Hora *</FormLabel>
+                                        <Select
+                                            onValueChange={field.onChange}
+                                            value={field.value}
+                                            disabled={isRescheduled}
+                                        >
                                             <FormControl>
-                                                <SelectTrigger>
+                                                <SelectTrigger
+                                                    className={cn(
+                                                        "h-10",
+                                                        isRescheduled && "opacity-60 cursor-not-allowed"
+                                                    )}
+                                                >
                                                     <Clock className="mr-2 h-4 w-4" />
                                                     <SelectValue placeholder="Selecciona una hora" />
                                                 </SelectTrigger>
@@ -310,16 +327,16 @@ export default function AppointmentEditDialog({
                             />
                         </div>
 
-                        {/* Tipo de Consulta */}
+                        {/* Tipo de Consulta - Una sola fila */}
                         <FormField
                             control={form.control}
                             name="consultation"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel>Tipo de Consulta *</FormLabel>
+                                    <FormLabel className="text-sm">Tipo de Consulta *</FormLabel>
                                     <Select onValueChange={field.onChange} value={field.value}>
                                         <FormControl>
-                                            <SelectTrigger>
+                                            <SelectTrigger className="h-10">
                                                 <SelectValue placeholder="Selecciona el tipo de consulta" />
                                             </SelectTrigger>
                                         </FormControl>
@@ -336,17 +353,17 @@ export default function AppointmentEditDialog({
                             )}
                         />
 
-                        {/* Duración y Estado */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Duración y Estado - Una sola fila */}
+                        <div className="grid grid-cols-2 gap-3">
                             <FormField
                                 control={form.control}
                                 name="duration"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Duración *</FormLabel>
+                                        <FormLabel className="text-sm">Duración *</FormLabel>
                                         <Select onValueChange={field.onChange} value={field.value}>
                                             <FormControl>
-                                                <SelectTrigger>
+                                                <SelectTrigger className="h-10">
                                                     <SelectValue placeholder="Selecciona la duración" />
                                                 </SelectTrigger>
                                             </FormControl>
@@ -368,10 +385,19 @@ export default function AppointmentEditDialog({
                                 name="status"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Estado *</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value}>
+                                        <FormLabel className="text-sm">Estado *</FormLabel>
+                                        <Select
+                                            onValueChange={field.onChange}
+                                            value={field.value}
+                                            disabled={isRescheduled}  // 👈 AGREGAR ESTA LÍNEA
+                                        >
                                             <FormControl>
-                                                <SelectTrigger>
+                                                <SelectTrigger
+                                                    className={cn(
+                                                        "h-10",
+                                                        isRescheduled && "opacity-60 cursor-not-allowed"  // 👈 AGREGAR ESTA LÍNEA
+                                                    )}
+                                                >
                                                     <SelectValue placeholder="Selecciona el estado" />
                                                 </SelectTrigger>
                                             </FormControl>
@@ -395,11 +421,11 @@ export default function AppointmentEditDialog({
                             name="notes"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel>Notas y Observaciones</FormLabel>
+                                    <FormLabel className="text-sm">Notas y Observaciones</FormLabel>
                                     <FormControl>
                                         <Textarea
                                             placeholder="Escribe aquí cualquier información adicional..."
-                                            className="min-h-[100px] resize-none"
+                                            className="min-h-[80px] resize-none"
                                             {...field}
                                         />
                                     </FormControl>
@@ -409,7 +435,7 @@ export default function AppointmentEditDialog({
                         />
 
                         {/* Botones */}
-                        <div className="flex justify-end gap-3 pt-4 border-t">
+                        <div className="flex justify-end gap-3 pt-3 border-t">
                             <Button
                                 type="button"
                                 variant="outline"
