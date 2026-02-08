@@ -22,6 +22,11 @@ interface CalendarAppointment {
   date: Date;
   notes?: string;
   color: string;
+  patientPhone?: string;
+  // Nuevos campos para distinguir entre consulta y tratamiento
+  isTreatment: boolean;
+  treatmentName?: string;
+  consultationType?: string;
 }
 
 // Función helper para normalizar estado a inglés
@@ -67,6 +72,10 @@ export default function Calendario() {
     date: apt.fecha,
     notes: apt.notas_observaciones,
     color: getAppointmentColor(apt.estado),
+    // Nuevos campos para distinguir tipo
+    isTreatment: apt.es_tratamiento || false,
+    treatmentName: apt.tratamiento_nombre,
+    consultationType: apt.tipo_consulta,
   }));
 
   // Manejo de clic en slot del calendario
@@ -129,6 +138,10 @@ export default function Calendario() {
             date: updatedAppointment.fecha,
             notes: updatedAppointment.notas_observaciones,
             color: getAppointmentColor(updatedAppointment.estado),
+            // Nuevos campos para distinguir tipo
+            isTreatment: updatedAppointment.es_tratamiento || false,
+            treatmentName: updatedAppointment.tratamiento_nombre,
+            consultationType: updatedAppointment.tipo_consulta,
           };
 
           setSelectedAppointment(refreshedAppointment);

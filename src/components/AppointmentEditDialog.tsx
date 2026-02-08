@@ -69,7 +69,7 @@ const editAppointmentSchema = z.object({
         required_error: "La fecha es requerida",
     }),
     time: z.string().min(1, "La hora es requerida"),
-    consultation: z.string().min(1, "Debe seleccionar un tipo de consulta"),
+    consultation: z.string().optional(),
     duration: z.string().min(1, "Debe seleccionar una duración"),
     status: z.string().min(1, "Debe seleccionar un estado"),
     notes: z.string().optional(),
@@ -127,6 +127,9 @@ export default function AppointmentEditDialog({
 
     // Verificar si la cita está reprogramada
     const isRescheduled = appointment ? normalizeStatus(appointment.status) === "reprogramada" : false;
+
+    // Verificar si la cita es de tratamiento (el tipo_consulta empieza con "Tratamiento:")
+    const isTreatmentAppointment = appointment?.treatment?.startsWith("Tratamiento:") ?? false;
 
     // Cargar datos cuando se abre el diálogo
     useEffect(() => {
@@ -229,7 +232,7 @@ export default function AppointmentEditDialog({
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                     <DialogTitle className="text-xl font-semibold">
                         Editar Cita
@@ -327,23 +330,61 @@ export default function AppointmentEditDialog({
                             />
                         </div>
 
-                        {/* Tipo de Consulta - Una sola fila */}
+                        {/* Tipo de Consulta - Solo si NO es cita de tratamiento */}
+                        {!isTreatmentAppointment && (
+                            <FormField
+                                control={form.control}
+                                name="consultation"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <FormLabel className="text-sm">Tipo de Consulta *</FormLabel>
+                                        <Select onValueChange={field.onChange} value={field.value}>
+                                            <FormControl>
+                                                <SelectTrigger className="h-10">
+                                                    <SelectValue placeholder="Selecciona el tipo de consulta" />
+                                                </SelectTrigger>
+                                            </FormControl>
+                                            <SelectContent>
+                                                {CONSULTATION_TYPES.map((type) => (
+                                                    <SelectItem key={type} value={type}>
+                                                        {type}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                        <FormMessage />
+                                    </FormItem>
+                                )}
+                            />
+                        )}
+
+                        {/* Mostrar info del tratamiento si es cita de tratamiento */}
+                        {isTreatmentAppointment && (
+                            <div className="p-3 bg-blue-50 dark:bg-blue-950/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                                <p className="text-xs font-medium text-blue-900 dark:text-blue-100 mb-1">Tratamiento</p>
+                                <p className="text-sm font-semibold text-blue-700 dark:text-blue-300">
+                                    {appointment.treatment}
+                                </p>
+                            </div>
+                        )}
+
+                        {/* Duración */}
                         <FormField
                             control={form.control}
-                            name="consultation"
+                            name="duration"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel className="text-sm">Tipo de Consulta *</FormLabel>
+                                    <FormLabel className="text-sm">Duración *</FormLabel>
                                     <Select onValueChange={field.onChange} value={field.value}>
                                         <FormControl>
                                             <SelectTrigger className="h-10">
-                                                <SelectValue placeholder="Selecciona el tipo de consulta" />
+                                                <SelectValue placeholder="Selecciona la duración" />
                                             </SelectTrigger>
                                         </FormControl>
                                         <SelectContent>
-                                            {CONSULTATION_TYPES.map((type) => (
-                                                <SelectItem key={type} value={type}>
-                                                    {type}
+                                            {DURATIONS.map((duration) => (
+                                                <SelectItem key={duration.value} value={duration.value}>
+                                                    {duration.label}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
@@ -352,68 +393,6 @@ export default function AppointmentEditDialog({
                                 </FormItem>
                             )}
                         />
-
-                        {/* Duración y Estado - Una sola fila */}
-                        <div className="grid grid-cols-2 gap-3">
-                            <FormField
-                                control={form.control}
-                                name="duration"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel className="text-sm">Duración *</FormLabel>
-                                        <Select onValueChange={field.onChange} value={field.value}>
-                                            <FormControl>
-                                                <SelectTrigger className="h-10">
-                                                    <SelectValue placeholder="Selecciona la duración" />
-                                                </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                                {DURATIONS.map((duration) => (
-                                                    <SelectItem key={duration.value} value={duration.value}>
-                                                        {duration.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-
-                            <FormField
-                                control={form.control}
-                                name="status"
-                                render={({ field }) => (
-                                    <FormItem>
-                                        <FormLabel className="text-sm">Estado *</FormLabel>
-                                        <Select
-                                            onValueChange={field.onChange}
-                                            value={field.value}
-                                            disabled={isRescheduled}  // 👈 AGREGAR ESTA LÍNEA
-                                        >
-                                            <FormControl>
-                                                <SelectTrigger
-                                                    className={cn(
-                                                        "h-10",
-                                                        isRescheduled && "opacity-60 cursor-not-allowed"  // 👈 AGREGAR ESTA LÍNEA
-                                                    )}
-                                                >
-                                                    <SelectValue placeholder="Selecciona el estado" />
-                                                </SelectTrigger>
-                                            </FormControl>
-                                            <SelectContent>
-                                                {APPOINTMENT_STATUSES.map((status) => (
-                                                    <SelectItem key={status.value} value={status.value}>
-                                                        {status.label}
-                                                    </SelectItem>
-                                                ))}
-                                            </SelectContent>
-                                        </Select>
-                                        <FormMessage />
-                                    </FormItem>
-                                )}
-                            />
-                        </div>
 
                         {/* Notas */}
                         <FormField

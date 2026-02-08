@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
@@ -38,6 +38,7 @@ import { format, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { useAuthContext } from "@/context/AuthContext";
 
 // Importar servicios de Firebase
 import {
@@ -48,6 +49,8 @@ import {
     getAllAppointments
 } from "@/services/appointmentService";
 import { Patient } from "@/types/appointment";
+import { collection, query, where, getDocs, doc, updateDoc, arrayUnion } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 
 // ==================== FUNCIÓN PARA CAPITALIZAR NOMBRES ====================
@@ -101,7 +104,7 @@ const appointmentFormSchema = z.object({
     newPatientDni: z.string().optional(),
     newPatientPhone: z.string().optional(),
     newPatientEmail: z.string().email("Email inválido").optional().or(z.literal("")),
-    consultation: z.string().min(1, "Debe seleccionar un tipo de consulta"),
+    consultation: z.string().optional(),
     duration: z.string().min(1, "Debe seleccionar una duración"),
     notes: z.string().optional(),
 }).refine((data) => {
@@ -132,6 +135,7 @@ export default function AppointmentDialog({
     selectedTime,
     onSuccess,
 }: AppointmentDialogProps) {
+    const { user } = useAuthContext();
     // Estados
     const [searchPatient, setSearchPatient] = useState("");
     const [patients, setPatients] = useState<Patient[]>([]);
@@ -142,6 +146,9 @@ export default function AppointmentDialog({
         disponible: true,
         mensaje: ''
     });
+    const [activeTreatments, setActiveTreatments] = useState<any[]>([]);
+    const [loadingTreatments, setLoadingTreatments] = useState(false);
+    const [selectedTreatmentId, setSelectedTreatmentId] = useState<string | null>(null);
 
     // Form setup
     const form = useForm<AppointmentFormValues>({
@@ -172,6 +179,17 @@ export default function AppointmentDialog({
     const isNewPatient = form.watch("isNewPatient");
     const watchedDate = form.watch("date");
     const watchedTime = form.watch("time");
+    const watchedDuration = form.watch("duration");
+    const watchedPatientId = form.watch("patientId");
+
+    // Cargar tratamientos activos cuando se selecciona un paciente
+    useEffect(() => {
+        if (watchedPatientId && !isNewPatient) {
+            loadActiveTreatments(watchedPatientId);
+        } else {
+            setActiveTreatments([]);
+        }
+    }, [watchedPatientId, isNewPatient]);
 
     // ==================== CARGAR PACIENTES Y CITAS ====================
     useEffect(() => {
@@ -209,22 +227,68 @@ export default function AppointmentDialog({
         }
     };
 
-    // ==================== FUNCIÓN DE VALIDACIÓN DE DISPONIBILIDAD ====================
-    const validarDisponibilidadHorario = (fecha: Date, hora: string): { disponible: boolean; mensaje: string } => {
+    // Cargar tratamientos activos del paciente seleccionado
+    const loadActiveTreatments = async (patientId: string) => {
+        if (!patientId) {
+            setActiveTreatments([]);
+            return;
+        }
+
+        try {
+            setLoadingTreatments(true);
+            const treatmentsRef = collection(db, "tratamientos");
+            const q = query(
+                treatmentsRef,
+                where("paciente_id", "==", patientId),
+                where("estado", "==", "activo")
+            );
+            const querySnapshot = await getDocs(q);
+
+            const treatmentsData: any[] = [];
+            querySnapshot.forEach((doc) => {
+                const data = doc.data();
+                treatmentsData.push({
+                    id: doc.id,
+                    tratamiento: data.tratamiento || "",
+                    pago_pendiente: data.pago_pendiente || 0,
+                    total_presupuesto: data.total_presupuesto || 0,
+                    monto_abonado: data.monto_abonado || 0,
+                });
+            });
+
+            setActiveTreatments(treatmentsData);
+        } catch (error) {
+            console.error("Error al cargar tratamientos:", error);
+            setActiveTreatments([]);
+        } finally {
+            setLoadingTreatments(false);
+        }
+    };
+
+    // ==================== FUNCIÓN DE VALIDACIÓN DE DISPONIBILIDAD ROBUSTA ====================
+    const validarDisponibilidadHorario = useCallback((fecha: Date, hora: string): { disponible: boolean; mensaje: string } => {
         if (!fecha || !hora || !appointments || appointments.length === 0) {
             return { disponible: true, mensaje: '' };
         }
 
         try {
-            // Calcular el inicio del intervalo en minutos desde medianoche
-            const horaInicio = (parseInt(hora.split(':')[0]) * 60) + parseInt(hora.split(':')[1] || '0');
-            const horaFin = horaInicio + 30; // Intervalo de 30 minutos
+            // Obtener duración seleccionada (con fallback a 30 min)
+            const duracionSeleccionada = parseInt(watchedDuration || '30');
 
-            // Filtrar todas las citas del día seleccionado
+            // Convertir hora a minutos desde medianoche
+            const horaInicio = (parseInt(hora.split(':')[0]) * 60) + parseInt(hora.split(':')[1] || '0');
+            const horaFin = horaInicio + duracionSeleccionada;
+
+            console.log(`🔍 Validando cita: ${hora} duración ${duracionSeleccionada} min (${horaInicio}-${horaFin} min)`);
+
+            // Filtrar todas las citas del día seleccionado (excluyendo canceladas)
             const citasDelDia = appointments.filter(apt => {
                 try {
-                    // Verificar si fecha existe y tiene el método toDate
                     if (!apt.fecha) return false;
+
+                    // Excluir citas canceladas
+                    const status = apt.estado?.toLowerCase() || '';
+                    if (status === 'cancelada' || status === 'cancelled') return false;
 
                     let fechaCita: Date;
                     if (typeof apt.fecha.toDate === 'function') {
@@ -242,49 +306,71 @@ export default function AppointmentDialog({
                 }
             });
 
-            console.log(`Citas del día encontradas: ${citasDelDia.length}`, citasDelDia);
-
-            // Contar cuántas citas están activas en este intervalo de 30 minutos
-            const citasEnIntervalo = citasDelDia.filter(apt => {
-                try {
-                    if (!apt.hora || !apt.duracion) return false;
-
-                    const aptInicio = (parseInt(apt.hora.split(':')[0]) * 60) + parseInt(apt.hora.split(':')[1] || '0');
-                    const aptFin = aptInicio + parseInt(apt.duracion);
-
-                    // La cita se superpone con el intervalo si:
-                    // - Empieza antes de que termine el intervalo Y
-                    // - Termina después de que empiece el intervalo
-                    const seSuperpone = aptInicio < horaFin && aptFin > horaInicio;
-
-                    if (seSuperpone) {
-                        console.log(`Cita superpuesta: ${apt.hora} - ${apt.duracion} min`);
-                    }
-
-                    return seSuperpone;
-                } catch (error) {
-                    console.error("Error procesando cita:", error);
-                    return false;
-                }
+            console.log(`📅 Citas del día encontradas: ${citasDelDia.length}`);
+            console.log(`📆 Fecha seleccionada: ${fecha.toLocaleDateString()}`);
+            citasDelDia.forEach(apt => {
+                const aptFecha = typeof apt.fecha.toDate === 'function' ? apt.fecha.toDate() : apt.fecha;
+                console.log(`   - Cita: ${apt.hora} (${apt.duracion}min) en ${aptFecha.toLocaleDateString()}`);
             });
 
-            console.log(`Citas en intervalo ${hora}: ${citasEnIntervalo.length}`);
+            // ══════════════════════════════════════════════════════════
+            // VALIDACIÓN POR INTERVALOS DE 30 MINUTOS
+            // ══════════════════════════════════════════════════════════
 
-            if (citasEnIntervalo.length >= 3) {
+            const intervalosConflictivos: string[] = [];
+
+            // Validar cada intervalo de 30 minutos que cubre la nueva cita
+            for (let minuto = horaInicio; minuto < horaFin; minuto += 30) {
+                const intervaloInicio = minuto;
+                const intervaloFin = Math.min(minuto + 30, horaFin);
+
+                // Contar cuántas citas se solapan con este intervalo de 30 min
+                const citasEnIntervalo = citasDelDia.filter(apt => {
+                    try {
+                        if (!apt.hora || !apt.duracion) return false;
+
+                        const aptInicio = (parseInt(apt.hora.split(':')[0]) * 60) + parseInt(apt.hora.split(':')[1] || '0');
+                        const aptFin = aptInicio + parseInt(apt.duracion.toString());
+
+                        // La cita se solapa con el intervalo si hay superposición REAL:
+                        // - Empieza antes de que termine el intervalo Y
+                        // - Termina DESPUÉS (no en el mismo momento) de que empiece el intervalo
+                        // Esto excluye citas que solo "tocan" el borde (ej: 8:00-8:30 NO cuenta para 8:30-9:00)
+                        return aptInicio < intervaloFin && aptFin > intervaloInicio;
+                    } catch {
+                        return false;
+                    }
+                });
+
+                console.log(`📊 Intervalo ${Math.floor(intervaloInicio/60)}:${(intervaloInicio%60).toString().padStart(2,'0')}-${Math.floor(intervaloFin/60)}:${(intervaloFin%60).toString().padStart(2,'0')}: ${citasEnIntervalo.length} citas`, citasEnIntervalo.map(c => `${c.hora} (${c.duracion}min)`));
+
+                // Si este intervalo ya tiene 4 citas, está lleno
+                if (citasEnIntervalo.length >= 4) {
+                    const h = Math.floor(minuto / 60);
+                    const m = minuto % 60;
+                    intervalosConflictivos.push(`${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+                }
+            }
+
+            // Si hay intervalos llenos, bloquear la creación
+            if (intervalosConflictivos.length > 0) {
+                console.log('❌ No hay disponibilidad - intervalos llenos:', intervalosConflictivos);
                 return {
                     disponible: false,
-                    mensaje: 'No hay disponibilidad en este horario. Ya hay 3 citas programadas para este intervalo.'
+                    mensaje: `No hay disponibilidad para esta cita. Intervalos llenos: ${intervalosConflictivos.join(', ')}`
                 };
             }
 
+            console.log('✅ Validación exitosa - todos los intervalos tienen espacio');
             return { disponible: true, mensaje: '' };
+
         } catch (error) {
-            console.error("Error en validación:", error);
+            console.error("❌ Error en validación:", error);
             return { disponible: true, mensaje: '' };
         }
-    };
+    }, [appointments, watchedDuration]);
 
-    // ==================== VALIDAR CUANDO CAMBIE FECHA U HORA ====================
+    // ==================== VALIDAR CUANDO CAMBIE FECHA, HORA O DURACIÓN ====================
     useEffect(() => {
         if (watchedDate && watchedTime) {
             const resultado = validarDisponibilidadHorario(watchedDate, watchedTime);
@@ -292,7 +378,7 @@ export default function AppointmentDialog({
         } else {
             setValidacion({ disponible: true, mensaje: '' });
         }
-    }, [watchedDate, watchedTime, appointments]);
+    }, [watchedDate, watchedTime, watchedDuration, appointments]);
 
     // Filtrado de pacientes
     const filteredPatients = patients.filter(p => {
@@ -301,18 +387,22 @@ export default function AppointmentDialog({
             p.dni_cliente.includes(searchPatient);
     });
 
-    // FUNCIÓN PARA GENERAR HORAS (7 AM - 8 PM)
+    // FUNCIÓN PARA GENERAR HORAS (7 AM - 12 AM / Medianoche)
     const generateTimeSlots = () => {
         const slots = [];
-        for (let hour = 7; hour <= 20; hour++) {
+        for (let hour = 7; hour <= 23; hour++) {
             for (let minute = 0; minute < 60; minute += 30) {
                 const timeValue = `${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`;
-                const displayHour = hour > 12 ? hour - 12 : hour;
+                const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
                 const period = hour >= 12 ? 'PM' : 'AM';
                 const displayTime = `${displayHour}:${minute.toString().padStart(2, '0')} ${period}`;
                 slots.push({ value: timeValue, label: displayTime });
             }
         }
+
+        // Agregar medianoche (00:00)
+        slots.push({ value: '00:00', label: '12:00 AM' });
+
         return slots;
     };
 
@@ -339,6 +429,16 @@ export default function AppointmentDialog({
 
     // ==================== HANDLER DE SUBMIT ====================
     const onSubmit = async (data: AppointmentFormValues) => {
+        // Validar que haya tipo de consulta O tratamiento seleccionado
+        if (!selectedTreatmentId && !data.consultation) {
+            toast({
+                title: "⚠️ Información incompleta",
+                description: "Debes seleccionar un tipo de consulta o un tratamiento activo.",
+                variant: "destructive",
+            });
+            return;
+        }
+
         // Validar disponibilidad antes de crear
         if (!validacion.disponible) {
             toast({
@@ -405,32 +505,93 @@ export default function AppointmentDialog({
 
             const capitalizedPatientName = capitalizeWords(data.patientName);
 
-            // ========== CREAR LA CITA ==========
-            const costo = getCostByConsultationType(data.consultation);
+            // ========== DETERMINAR TIPO Y COSTO ==========
+            let tipo_consulta = "";
+            let costo = 0;
+            let tratamiento_id = "";
+            let tratamiento_nombre = "";
 
-            const appointmentData = {
+            if (selectedTreatmentId) {
+                // Cita para tratamiento - tipo_consulta se deja vacío
+                const treatment = activeTreatments.find(t => t.id === selectedTreatmentId);
+                if (treatment) {
+                    tipo_consulta = ""; // Vacío para tratamientos
+                    tratamiento_id = treatment.id;
+                    tratamiento_nombre = treatment.tratamiento;
+                    costo = 0; // El costo está en el presupuesto del tratamiento
+                }
+            } else {
+                // Cita para consulta normal
+                tipo_consulta = data.consultation || "";
+                costo = getCostByConsultationType(data.consultation || "");
+            }
+
+            // ========== CREAR LA CITA CON NUEVA ESTRUCTURA ==========
+            const appointmentData: any = {
+                // Información básica
                 fecha: data.date,
                 hora: data.time,
+                fecha_creacion: new Date(),
+
+                // Información del paciente
                 paciente_id: patientId,
                 paciente_nombre: capitalizedPatientName,
-                tipo_consulta: data.consultation,
+
+                // Tipo de cita
+                es_tratamiento: !!selectedTreatmentId,
+                tipo_consulta: tipo_consulta,
+
+                // Duración y tiempo
                 duracion: data.duration,
-                costo: costo,
-                pagado: false, 
-                notas_observaciones: data.notes || "",
+                duracion_real: "",
+                hora_inicio_atencion: "",
+                hora_fin_atencion: "",
+
+                // Personal
+                atendido_por: "",
+
+                // Estado y pago
                 estado: "pendiente" as const,
+                costo: costo,
+                pagado: false,
+
+                // Notas
+                notas_observaciones: data.notes || "",
             };
 
-            await createAppointment(appointmentData);
+            // Si es cita de tratamiento, agregar información adicional
+            if (selectedTreatmentId) {
+                appointmentData.tratamiento_id = tratamiento_id;
+                appointmentData.tratamiento_nombre = tratamiento_nombre;
+            }
+
+            const appointmentId = await createAppointment(appointmentData, user?.displayName || "Sistema");
+
+            // ========== SI ES CITA DE TRATAMIENTO, ACTUALIZAR EL ARRAY DE CITAS ==========
+            if (selectedTreatmentId && appointmentId) {
+                try {
+                    const treatmentRef = doc(db, "tratamientos", selectedTreatmentId);
+                    await updateDoc(treatmentRef, {
+                        citas: arrayUnion(appointmentId)
+                    });
+                    console.log(`✅ Cita ${appointmentId} agregada al tratamiento ${selectedTreatmentId}`);
+                } catch (updateError) {
+                    console.error("Error al actualizar array de citas en tratamiento:", updateError);
+                    // No lanzar error, la cita ya se creó exitosamente
+                }
+            }
 
             toast({
                 title: "✅ Cita creada exitosamente",
-                description: `Cita para ${capitalizedPatientName} agendada el ${format(data.date, "PPP", { locale: es })} a las ${data.time}.`,
+                description: selectedTreatmentId
+                    ? `Cita para tratamiento "${tratamiento_nombre}" agendada el ${format(data.date, "PPP", { locale: es })} a las ${data.time}.`
+                    : `Cita para ${capitalizedPatientName} agendada el ${format(data.date, "PPP", { locale: es })} a las ${data.time}.`,
             });
 
             // Reset y cerrar
             form.reset();
             setSearchPatient("");
+            setSelectedTreatmentId(null);
             onOpenChange(false);
             onSuccess?.();
 
@@ -549,26 +710,53 @@ export default function AppointmentDialog({
                                         <FormLabel>Paciente *</FormLabel>
                                         <FormControl>
                                             <div className="relative">
-                                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                                                <Input
-                                                    placeholder="Buscar paciente por nombre o DNI..."
-                                                    className="pl-10"
-                                                    value={searchPatient}
-                                                    onChange={(e) => {
-                                                        setSearchPatient(e.target.value);
-                                                        form.setValue("isNewPatient", false);
-                                                        form.setValue("patientName", "");
-                                                    }}
-                                                    disabled={loadingPatients}
-                                                />
-                                                {loadingPatients && (
-                                                    <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                                                {/* Mostrar campo de búsqueda solo si NO hay paciente seleccionado */}
+                                                {!form.watch("patientId") && !isNewPatient && (
+                                                    <>
+                                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                                        <Input
+                                                            placeholder="Buscar paciente por nombre o DNI..."
+                                                            className="pl-10"
+                                                            value={searchPatient}
+                                                            onChange={(e) => {
+                                                                setSearchPatient(e.target.value);
+                                                                form.setValue("isNewPatient", false);
+                                                                form.setValue("patientName", "");
+                                                            }}
+                                                            disabled={loadingPatients}
+                                                        />
+                                                        {loadingPatients && (
+                                                            <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+                                                        )}
+                                                    </>
+                                                )}
+
+                                                {/* Mostrar nombre del paciente seleccionado con opción de cambiar */}
+                                                {(form.watch("patientId") || isNewPatient) && (
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="flex-1 px-3 py-2 bg-muted rounded-md">
+                                                            <span className="font-medium">{form.watch("patientName")}</span>
+                                                        </div>
+                                                        <Button
+                                                            type="button"
+                                                            variant="outline"
+                                                            size="sm"
+                                                            onClick={() => {
+                                                                form.setValue("patientId", "");
+                                                                form.setValue("patientName", "");
+                                                                form.setValue("isNewPatient", false);
+                                                                setSearchPatient("");
+                                                            }}
+                                                        >
+                                                            Cambiar
+                                                        </Button>
+                                                    </div>
                                                 )}
                                             </div>
                                         </FormControl>
 
                                         {/* Lista de resultados */}
-                                        {searchPatient && !loadingPatients && (
+                                        {searchPatient && !loadingPatients && !form.watch("patientId") && !isNewPatient && (
                                             <div className="mt-2 border rounded-md max-h-[200px] overflow-y-auto bg-card">
                                                 {filteredPatients.length > 0 ? (
                                                     <div className="p-1">
@@ -667,33 +855,102 @@ export default function AppointmentDialog({
                                     />
                                 </div>
                             )}
+
+                            {/* Sección de tratamientos activos */}
+                            {watchedPatientId && !isNewPatient && (
+                                <>
+                                    <div className="flex items-center justify-between mb-3">
+                                        <p className="text-sm font-semibold">
+                                            Tratamientos Activos
+                                        </p>
+                                        {loadingTreatments && (
+                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                        )}
+                                    </div>
+
+                                    {!loadingTreatments && activeTreatments.length === 0 && (
+                                        <p className="text-sm text-muted-foreground italic mb-3">
+                                            No hay tratamientos activos
+                                        </p>
+                                    )}
+
+                                    {!loadingTreatments && activeTreatments.length > 0 && (
+                                        <div className="space-y-2 mb-4">
+                                            {activeTreatments.map((treatment) => {
+                                                const isSelected = selectedTreatmentId === treatment.id;
+                                                return (
+                                                    <button
+                                                        key={treatment.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            if (isSelected) {
+                                                                setSelectedTreatmentId(null);
+                                                            } else {
+                                                                setSelectedTreatmentId(treatment.id);
+                                                            }
+                                                        }}
+                                                        className={`w-full text-left p-3 rounded-md border-0.5 transition-all ${
+                                                            isSelected
+                                                                ? 'border-green-500 bg-green-100 dark:bg-green-900/40 ring-2 ring-green-500'
+                                                                : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:border-green-400'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-start justify-between">
+                                                            <p className="font-medium text-sm">{treatment.tratamiento}</p>
+                                                            {isSelected && (
+                                                                <span className="text-xs bg-green-500 text-white px-2 py-1 rounded">
+                                                                    Seleccionado
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center justify-between mt-1">
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Pendiente: S/ {treatment.pago_pendiente.toFixed(2)}
+                                                            </span>
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Total: S/ {treatment.total_presupuesto.toFixed(2)}
+                                                            </span>
+                                                        </div>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
 
-                        {/* 3️⃣ TIPO DE CONSULTA */}
-                        <FormField
-                            control={form.control}
-                            name="consultation"
-                            render={({ field }) => (
-                                <FormItem>
-                                    <FormLabel>Tipo de Consulta *</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Selecciona el tipo de consulta" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {CONSULTATION_TYPES.map((item) => (
-                                                <SelectItem key={item.type} value={item.type}>
-                                                    {item.type} - S/ {item.cost}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
-                                </FormItem>
-                            )}
-                        />
+                        {/* 3️⃣ TIPO DE CONSULTA - Solo si NO hay tratamiento seleccionado */}
+                        {!selectedTreatmentId && (
+                            <FormField
+                                control={form.control}
+                                name="consultation"
+                                render={({ field }) => (
+                                    <FormItem>
+                                        <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                                            <FormLabel className="text-right">Tipo de Consulta *</FormLabel>
+                                            <div className="space-y-2">
+                                                <Select onValueChange={field.onChange} value={field.value}>
+                                                    <FormControl>
+                                                        <SelectTrigger>
+                                                            <SelectValue placeholder="Selecciona el tipo de consulta" />
+                                                        </SelectTrigger>
+                                                    </FormControl>
+                                                    <SelectContent>
+                                                        {CONSULTATION_TYPES.map((item) => (
+                                                            <SelectItem key={item.type} value={item.type}>
+                                                                {item.type} - S/ {item.cost}
+                                                            </SelectItem>
+                                                        ))}
+                                                    </SelectContent>
+                                                </Select>
+                                                <FormMessage />
+                                            </div>
+                                        </div>
+                                    </FormItem>
+                                )}
+                            />
+                        )}
 
                         {/* 4️⃣ DURACIÓN */}
                         <FormField
@@ -701,22 +958,26 @@ export default function AppointmentDialog({
                             name="duration"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel>Duración *</FormLabel>
-                                    <Select onValueChange={field.onChange} value={field.value}>
-                                        <FormControl>
-                                            <SelectTrigger>
-                                                <SelectValue placeholder="Selecciona la duración" />
-                                            </SelectTrigger>
-                                        </FormControl>
-                                        <SelectContent>
-                                            {DURATIONS.map((duration) => (
-                                                <SelectItem key={duration.value} value={duration.value}>
-                                                    {duration.label}
-                                                </SelectItem>
-                                            ))}
-                                        </SelectContent>
-                                    </Select>
-                                    <FormMessage />
+                                    <div className="grid grid-cols-[140px_1fr] items-center gap-4">
+                                        <FormLabel className="text-right">Duración *</FormLabel>
+                                        <div className="space-y-2">
+                                            <Select onValueChange={field.onChange} value={field.value}>
+                                                <FormControl>
+                                                    <SelectTrigger>
+                                                        <SelectValue placeholder="Selecciona la duración" />
+                                                    </SelectTrigger>
+                                                </FormControl>
+                                                <SelectContent>
+                                                    {DURATIONS.map((duration) => (
+                                                        <SelectItem key={duration.value} value={duration.value}>
+                                                            {duration.label}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            <FormMessage />
+                                        </div>
+                                    </div>
                                 </FormItem>
                             )}
                         />
@@ -730,9 +991,37 @@ export default function AppointmentDialog({
                                     <FormLabel>Notas y Observaciones</FormLabel>
                                     <FormControl>
                                         <Textarea
-                                            placeholder="Escribe aquí cualquier información adicional sobre la cita..."
+                                            placeholder="Escribe aquí cualquier información adicional sobre la cita...&#10;• Cada línea separada por Enter tendrá una viñeta automáticamente"
                                             className="min-h-[100px] resize-none"
-                                            {...field}
+                                            value={field.value}
+                                            onChange={(e) => {
+                                                const text = e.target.value;
+                                                const lines = text.split('\n');
+                                                const processedLines = lines.map(line => {
+                                                    const trimmedLine = line.trim();
+                                                    // Si la línea no está vacía y no empieza con viñeta, agregar viñeta
+                                                    if (trimmedLine && !trimmedLine.startsWith('•')) {
+                                                        return '• ' + trimmedLine.replace(/^[•\-\*]\s*/, '');
+                                                    }
+                                                    return line;
+                                                });
+                                                field.onChange(processedLines.join('\n'));
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    const textarea = e.currentTarget;
+                                                    const cursorPosition = textarea.selectionStart;
+                                                    const textBefore = field.value.substring(0, cursorPosition);
+                                                    const textAfter = field.value.substring(cursorPosition);
+                                                    field.onChange(textBefore + '\n• ' + textAfter);
+
+                                                    // Mover el cursor después de la viñeta
+                                                    setTimeout(() => {
+                                                        textarea.selectionStart = textarea.selectionEnd = cursorPosition + 3;
+                                                    }, 0);
+                                                }
+                                            }}
                                         />
                                     </FormControl>
                                     <FormMessage />

@@ -1,4 +1,11 @@
 // src/types/appointment.ts
+export interface EstadoHistorial {
+  estado: string;
+  fecha: Date;
+  realizado_por: string;
+  tipo: "creacion" | "cambio_estado";
+}
+
 export interface Patient {
   id?: string;
   nombre: string;
@@ -20,24 +27,43 @@ export interface Patient {
 }
 
 export interface Appointment {
+  // Información básica
   id?: string;
   fecha: Date;
   hora: string;
+  fecha_creacion: Date;
+
+  // Información del paciente
   paciente_id: string;
   paciente_nombre: string;
-  tipo_consulta: string;
-  duracion: string; // Duración estimada
-  costo: number;
-  pagado: boolean; 
+
+  // Tipo de cita (IMPORTANTE)
+  es_tratamiento: boolean;           // false = consulta, true = tratamiento
+  tipo_consulta: string;             // "Evaluación general" o "Tratamiento: Ortodoncia"
+
+  // Información de tratamiento (solo si es_tratamiento = true)
+  tratamiento_id?: string;           // Opcional, solo para citas de tratamiento
+  tratamiento_nombre?: string;       // Opcional, duplicado para queries rápidas
+
+  // Duración y tiempo
+  duracion: string;                  // "30", "60", "120" (en minutos)
+  duracion_real?: string;            // Duración real después de completar
+  hora_inicio_atencion?: string;     // Hora real de inicio
+  hora_fin_atencion?: string;        // Hora real de fin
+
+  // Personal
+  atendido_por?: string;             // Nombre del profesional
+
+  // Estado y pago
+  estado: "pendiente" | "confirmada" | "completada" | "cancelada" | "reprogramada";
+  costo?: number;                    // 0 para tratamientos, valor para consultas
+  pagado?: boolean;
+
+  // Notas
   notas_observaciones?: string;
-  estado: "confirmada" | "pendiente" | "completada" | "cancelada" | "reprogramada";
-  fecha_creacion: Date;
-  
-  // Nuevos campos para el seguimiento
-  atendido_por?: string;
-  duracion_real?: string;
-  hora_inicio_atencion?: string;
-  hora_fin_atencion?: string;
+
+  // Historial de cambios de estado
+  historial_estados?: EstadoHistorial[];
 }
 
 // Función helper para obtener el color según el estado

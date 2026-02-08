@@ -36,24 +36,45 @@ import { doc, updateDoc, Timestamp } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Patient } from "@/types/appointment";
 
+// Capitaliza cada palabra: primera letra mayúscula, resto minúscula
+const capitalizeName = (value: string) =>
+  value
+    .toLowerCase()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+
 const patientFormSchema = z.object({
   nombre: z.string().min(1, "El nombre es requerido"),
   apellido_paterno: z.string().min(1, "El apellido paterno es requerido"),
   apellido_materno: z.string().min(1, "El apellido materno es requerido"),
-  dni_cliente: z.string().min(8, "El DNI debe tener al menos 8 dígitos"),
+  dni_cliente: z
+    .string()
+    .regex(/^\d{8}$/, "El DNI debe tener exactamente 8 dígitos numéricos"),
   edad: z.number().min(0, "La edad debe ser mayor a 0").optional(),
   fecha_nacimiento: z.date({
     required_error: "La fecha de nacimiento es requerida",
   }),
   sexo: z.enum(["Masculino", "Femenino", "Otro", ""]).optional(),
-  email: z.string().email("Email inválido").or(z.literal("")),
-  celular: z.string().min(1, "El celular es requerido"),
-  telefono_fijo: z.string().optional(),
-  direccion: z.string().optional(),
-  distrito_direccion: z.string().optional(),
-  lugar_procedencia: z.string().optional(),
+  email: z
+    .string()
+    .regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "Email inválido")
+    .max(50, "El email no puede superar 50 caracteres")
+    .or(z.literal("")),
+  celular: z
+    .string()
+    .regex(/^9\d{8}$/, "El celular debe empezar con 9 y tener 9 dígitos"),
+  telefono_fijo: z
+    .string()
+    .regex(/^\d*$/, "Solo se permiten números")
+    .optional(),
+  direccion: z.string().max(50, "Máximo 50 caracteres").optional(),
+  distrito_direccion: z.string().max(50, "Máximo 50 caracteres").optional(),
+  lugar_procedencia: z
+    .string()
+    .max(50, "Máximo 50 caracteres")
+    .regex(/^[^\d]*$/, "No se permiten números")
+    .optional(),
   estado_civil: z.enum(["Soltero", "Casado", "Divorciado", "Viudo", ""]).optional(),
-  ocupacion: z.string().optional(),
+  ocupacion: z.string().max(50, "Máximo 50 caracteres").optional(),
 });
 
 type PatientFormValues = z.infer<typeof patientFormSchema>;
@@ -142,16 +163,16 @@ export default function EditPatientDialog({
 
       // Preparar datos actualizados
       const updatedData = {
-        nombre: data.nombre,
-        apellido_paterno: data.apellido_paterno,
-        apellido_materno: data.apellido_materno,
+        nombre: capitalizeName(data.nombre),
+        apellido_paterno: capitalizeName(data.apellido_paterno),
+        apellido_materno: capitalizeName(data.apellido_materno),
         dni_cliente: data.dni_cliente,
         edad: data.edad || null,
-        fecha_nacimiento: data.fecha_nacimiento 
-          ? Timestamp.fromDate(data.fecha_nacimiento) 
+        fecha_nacimiento: data.fecha_nacimiento
+          ? Timestamp.fromDate(data.fecha_nacimiento)
           : null,
         sexo: data.sexo || "",
-        email: data.email || "",
+        email: data.email?.toLowerCase() || "",
         celular: data.celular,
         telefono_fijo: data.telefono_fijo || "",
         direccion: data.direccion || "",
@@ -253,7 +274,15 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>DNI *</FormLabel>
                       <FormControl>
-                        <Input placeholder="73249876" maxLength={8} {...field} />
+                        <Input
+                          placeholder="73249876"
+                          maxLength={8}
+                          {...field}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, "").slice(0, 8);
+                            field.onChange(val);
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -275,7 +304,6 @@ export default function EditPatientDialog({
                         <SelectContent>
                           <SelectItem value="Masculino">Masculino</SelectItem>
                           <SelectItem value="Femenino">Femenino</SelectItem>
-                          <SelectItem value="Otro">Otro</SelectItem>
                         </SelectContent>
                       </Select>
                       <FormMessage />
@@ -412,7 +440,21 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>Celular *</FormLabel>
                       <FormControl>
-                        <Input placeholder="987654321" {...field} />
+                        <div className="flex">
+                          <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-input bg-muted text-sm text-muted-foreground select-none">
+                            +51
+                          </span>
+                          <Input
+                            placeholder="987654321"
+                            className="rounded-l-none"
+                            maxLength={10}
+                            {...field}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/\D/g, "").slice(0, 9);
+                              field.onChange(val);
+                            }}
+                          />
+                        </div>
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -426,7 +468,14 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>Teléfono Fijo</FormLabel>
                       <FormControl>
-                        <Input placeholder="014567890" {...field} />
+                        <Input
+                          placeholder="064453585"
+                          {...field}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/\D/g, "");
+                            field.onChange(val);
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -441,7 +490,12 @@ export default function EditPatientDialog({
                   <FormItem>
                     <FormLabel>Email</FormLabel>
                     <FormControl>
-                      <Input type="email" placeholder="paciente@email.com" {...field} />
+                      <Input
+                        type="email"
+                        placeholder="paciente@email.com"
+                        maxLength={50}
+                        {...field}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -456,7 +510,7 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>Dirección</FormLabel>
                       <FormControl>
-                        <Input placeholder="Av. Principal 123" {...field} />
+                        <Input placeholder="Av. San Carlos 1203" maxLength={50} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -470,7 +524,7 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>Distrito</FormLabel>
                       <FormControl>
-                        <Input placeholder="San Isidro" {...field} />
+                        <Input placeholder="Huancayo" maxLength={50} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -514,7 +568,7 @@ export default function EditPatientDialog({
                     <FormItem>
                       <FormLabel>Ocupación</FormLabel>
                       <FormControl>
-                        <Input placeholder="Ingeniero, Profesor, etc." {...field} />
+                        <Input placeholder="Ingeniero, Profesor, etc." maxLength={50} {...field} />
                       </FormControl>
                       <FormMessage />
                     </FormItem>
@@ -527,9 +581,17 @@ export default function EditPatientDialog({
                 name="lugar_procedencia"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Lugar de Procedencia</FormLabel>
+                    <FormLabel>Lugar de Procedencia (Distrito/Region)</FormLabel>
                     <FormControl>
-                      <Input placeholder="Lima, Perú" {...field} />
+                      <Input
+                        placeholder="Huancayo, Junín"
+                        maxLength={50}
+                        {...field}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[0-9]/g, "");
+                          field.onChange(val);
+                        }}
+                      />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

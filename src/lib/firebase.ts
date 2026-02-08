@@ -1,17 +1,17 @@
 // Importar las funciones de Firebase que necesitas
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth, GoogleAuthProvider, Auth } from 'firebase/auth';
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// Tu configuración de Firebase (la que tienes en la imagen)
+// Configuración de Firebase desde variables de entorno
 const firebaseConfig = {
-    apiKey: "AIzaSyB9VVPrgxozAesYLkJW17ks96wp1H-LSE0",
-    authDomain: "app-dental-d2b34.firebaseapp.com",
-    projectId: "app-dental-d2b34",
-    storageBucket: "app-dental-d2b34.firebasestorage.app",
-    messagingSenderId: "253456552287",
-    appId: "1:253456552287:web:ce3d24b99629f5dd2e26ea"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
 // Inicializar Firebase
@@ -21,5 +21,7 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+
+export const googleProvider = new GoogleAuthProvider();
 
 export default app;

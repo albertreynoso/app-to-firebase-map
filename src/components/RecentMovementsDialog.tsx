@@ -13,9 +13,17 @@ import {
   Activity,
   Loader2,
   Stethoscope,
+  ChevronRight,
 } from "lucide-react";
 
 // ══════════ INTERFACES ══════════
+interface EstadoHistorial {
+  estado: string;
+  fecha: any;
+  realizado_por: string;
+  tipo: "creacion" | "cambio_estado";
+}
+
 interface Appointment {
   id: string;
   tipo_consulta: string;
@@ -27,6 +35,7 @@ interface Appointment {
   pagado?: boolean;
   notas_observaciones?: string;
   paciente_nombre?: string;
+  historial_estados?: EstadoHistorial[];
 }
 
 interface Pago {
@@ -231,6 +240,57 @@ export default function MovimientosRecientes({
   );
 }
 
+// ══════════ HELPER: FORMATEAR FECHA DEL HISTORIAL ══════════
+function formatHistorialFecha(fecha: any): string {
+  try {
+    const date = typeof fecha?.toDate === "function" ? fecha.toDate() : new Date(fecha);
+    const dia = date.toLocaleDateString("es-PE", { day: "2-digit", month: "short" });
+    const hora = date.toLocaleTimeString("es-PE", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${dia} ${hora}`;
+  } catch {
+    return "";
+  }
+}
+
+// ══════════ HELPER: TRUNCAR NOMBRE A DOS PALABRAS ══════════
+function shortName(name: string): string {
+  if (!name) return "";
+  const parts = name.trim().split(/\s+/);
+  return parts.slice(0, 2).join(" ");
+}
+
+// ══════════ COMPONENTE: TIMELINE DE ESTADOS ══════════
+function EstadoTimeline({ historial }: { historial: EstadoHistorial[] }) {
+  if (!historial || historial.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-1 flex-shrink-0 pl-3 border-l border-border/50">
+      {historial.map((entry, i) => {
+        const cfg = ESTADO_CONFIG[entry.estado?.toLowerCase()] || ESTADO_CONFIG.pendiente;
+        const label = entry.tipo === "creacion" ? "Creación" : cfg.label;
+        return (
+          <div key={i} className="flex items-center gap-1">
+            {i > 0 && <ChevronRight className="h-3 w-3 text-muted-foreground flex-shrink-0" />}
+            <div className="flex flex-col items-center min-w-0">
+              <span
+                className={`text-[10px] font-medium px-1.5 py-0.5 rounded whitespace-nowrap ${cfg.bgColor} ${cfg.textColor}`}
+              >
+                {label}
+              </span>
+              <span className="text-[9px] text-muted-foreground mt-0.5 whitespace-nowrap">
+                {formatHistorialFecha(entry.fecha)}
+              </span>
+              <span className="text-[9px] text-muted-foreground whitespace-nowrap">
+                {shortName(entry.realizado_por)}
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // ══════════ COMPONENTE: CITA ══════════
 function CitaMovimiento({ cita, fecha }: { cita: Appointment; fecha: Date }) {
   const config = getEstadoConfig(cita.estado);
@@ -252,10 +312,12 @@ function CitaMovimiento({ cita, fecha }: { cita: Appointment; fecha: Date }) {
         <Stethoscope className="h-4 w-4" style={{ color: config.color }} />
       </div>
 
-      {/* Contenido */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+      {/* Tres contenedores: info | timeline | badge */}
+      <div className="flex-1 min-w-0 flex items-center gap-4">
+
+        {/* Contenedor 1: Info principal (1/3 del ancho, alineado start) */}
+        <div className="w-1/3 flex justify-start">
+          <div>
             <p className="font-semibold text-sm text-foreground">
               {cita.tipo_consulta}
             </p>
@@ -269,45 +331,54 @@ function CitaMovimiento({ cita, fecha }: { cita: Appointment; fecha: Date }) {
               • {cita.hora}
               {cita.duracion && ` • ${cita.duracion} min`}
             </p>
-          </div>
 
-          {/* Badge de estado */}
+            {/* Info extra para canceladas y reprogramadas */}
+            {(cita.estado.toLowerCase() === "cancelada" ||
+              cita.estado.toLowerCase() === "reprogramada") &&
+              cita.notas_observaciones && (
+                <div className="mt-2 p-2 rounded-md bg-muted/50 border border-border/50">
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium">Nota:</span> {cita.notas_observaciones}
+                  </p>
+                </div>
+              )}
+
+            {/* Costo si aplica */}
+            {cita.costo && cita.costo > 0 && (
+              <div className="flex items-center gap-1.5 mt-1.5">
+                <DollarSign className="h-3 w-3 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground">
+                  {formatCurrency(cita.costo)}
+                  {cita.pagado ? (
+                    <span className="text-emerald-600 font-medium ml-1">· Pagado</span>
+                  ) : (
+                    <span className="font-medium ml-1" style={{ color: "rgb(245, 158, 11)" }}>
+                      · Pendiente de pago
+                    </span>
+                  )}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Contenedor 2: Timeline (se expande, alineado start) */}
+        <div className="flex-1 flex justify-start">
+          {cita.historial_estados && cita.historial_estados.length > 0 && (
+            <EstadoTimeline historial={cita.historial_estados} />
+          )}
+        </div>
+
+        {/* Contenedor 3: Badge (tamaño automático, alineado end) */}
+        <div className="flex-shrink-0 flex justify-end">
           <Badge
             variant="secondary"
-            className={`${config.bgColor} ${config.textColor} border-0 flex-shrink-0 gap-1`}
+            className={`${config.bgColor} ${config.textColor} border-0 gap-1`}
           >
             <StatusIcon className="h-3 w-3" />
             {config.label}
           </Badge>
         </div>
-
-        {/* Info extra para canceladas y reprogramadas */}
-        {(cita.estado.toLowerCase() === "cancelada" ||
-          cita.estado.toLowerCase() === "reprogramada") &&
-          cita.notas_observaciones && (
-            <div className="mt-2 p-2 rounded-md bg-muted/50 border border-border/50">
-              <p className="text-xs text-muted-foreground">
-                <span className="font-medium">Nota:</span> {cita.notas_observaciones}
-              </p>
-            </div>
-          )}
-
-        {/* Costo si aplica */}
-        {cita.costo && cita.costo > 0 && (
-          <div className="flex items-center gap-1.5 mt-1.5">
-            <DollarSign className="h-3 w-3 text-muted-foreground" />
-            <span className="text-xs text-muted-foreground">
-              {formatCurrency(cita.costo)}
-              {cita.pagado ? (
-                <span className="text-emerald-600 font-medium ml-1">· Pagado</span>
-              ) : (
-                <span className="font-medium ml-1" style={{ color: "rgb(245, 158, 11)" }}>
-                  · Pendiente de pago
-                </span>
-              )}
-            </span>
-          </div>
-        )}
       </div>
     </div>
   );

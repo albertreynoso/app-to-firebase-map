@@ -1131,50 +1131,131 @@ export default function PacienteDetalle() {
       </div>
 
       <div className="p-6 lg:p-8 bg-background rounded-lg border">
-        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6 pb-6">
-          <div className="flex items-start gap-4">
-            <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-              <span className="text-2xl font-bold text-primary">
-                {patient.initials}
-              </span>
-            </div>
-            <div>
-              <h1 className="text-3xl font-bold text-foreground">
-                {patient.fullName}
-              </h1>
-              <div className="flex flex-wrap items-center gap-3 mt-2">
-                <Badge variant="default" className="text-sm">
-                  {patient.sexo || "No especificado"}
-                </Badge>
-                {patient.age && (
-                  <span className="text-sm text-muted-foreground">
-                    {patient.age} años
-                  </span>
-                )}
-                <span className="text-sm text-muted-foreground">
-                  DNI: {patient.dni_cliente}
-                </span>
-              </div>
-              {patient.ocupacion && (
-                <div className="flex items-center gap-2 mt-2">
-                  <Briefcase className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm text-muted-foreground">
-                    {patient.ocupacion}
+        {(() => {
+          const optionalFields = [
+            patient.email,
+            patient.celular,
+            patient.direccion,
+            patient.distrito_direccion,
+            patient.lugar_procedencia,
+            patient.estado_civil,
+            patient.ocupacion,
+            patient.sexo,
+            patient.fecha_nacimiento,
+          ];
+          const filled = optionalFields.filter(f => f && String(f).trim() !== "").length;
+          const total = optionalFields.length;
+          const pct = Math.round((filled / total) * 100);
+          const isComplete = pct === 100;
+
+          const size = 76;
+          const strokeWidth = 7;
+          const radius = (size - strokeWidth) / 2;
+          const circumference = 2 * Math.PI * radius;
+          const dashOffset = circumference - (pct / 100) * circumference;
+          const ringColor = isComplete ? "#22c55e" : "#eab308";
+
+          return (
+            <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-6 pb-6">
+              <div className="flex items-start gap-4">
+                <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
+                  <span className="text-2xl font-bold text-primary">
+                    {patient.initials}
                   </span>
                 </div>
-              )}
+                <div>
+                  <div className="flex flex-wrap place-items-center gap-4">
+                    <h1 className="text-3xl font-bold text-foreground">
+                      {patient.fullName}
+                    </h1>
+                    {isComplete && (
+                      <Badge className="bg-green-500 hover:bg-green-500 text-white text-xs">
+                        Perfil completo
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3 mt-2">
+
+                    <span className="text-sm text-muted-foreground">
+                      DNI: {patient.dni_cliente}
+                    </span>
+                    {patient.age && (
+                      <span className="text-sm text-muted-foreground">
+                        {patient.age} años
+                      </span>
+                    )}
+                  </div>
+                  {patient.ocupacion && (
+                    <div className="flex items-center gap-3 mt-2">
+                      <div className="flex items-center gap-1">
+                        <Phone className="h-5 w-5 text-muted-foreground mt-0.5" />
+                        <span className="text-sm text-muted-foreground">
+                          {patient.celular}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <Briefcase className="h-4 w-4 text-muted-foreground" />
+                        <span className="text-sm text-muted-foreground">
+                          {patient.ocupacion}
+                        </span>
+                      </div>
+
+
+
+                    </div>
+                  )}
+                </div>
+
+                {/* Gráfico circular - solo cuando el perfil NO está completo */}
+                {!isComplete && (
+                  <div className="flex flex-col items-center ml-4 self-start">
+                    <div className="relative" style={{ width: size, height: size }}>
+                      <svg width={size} height={size} className="-rotate-90">
+                        <circle
+                          cx={size / 2}
+                          cy={size / 2}
+                          r={radius}
+                          fill="none"
+                          stroke={ringColor}
+                          strokeWidth={strokeWidth}
+                          strokeOpacity={0.2}
+                        />
+                        <circle
+                          cx={size / 2}
+                          cy={size / 2}
+                          r={radius}
+                          fill="none"
+                          stroke={ringColor}
+                          strokeWidth={strokeWidth}
+                          strokeDasharray={circumference}
+                          strokeDashoffset={dashOffset}
+                          strokeLinecap="round"
+                          style={{ transition: "stroke-dashoffset 0.5s ease" }}
+                        />
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className="text-[13px] font-bold" style={{ color: ringColor }}>
+                          {pct}%
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Botón */}
+              <Button
+                variant={isComplete ? "outline" : "default"}
+                size="sm"
+                onClick={() => setIsEditDialogOpen(true)}
+                className={isComplete ? "md:ml-auto" : "md:ml-auto bg-amber-400 hover:bg-amber-500 text-white border-0"}
+              >
+                <Edit className="h-4 w-4 mr-2 shrink-0" />
+                {isComplete ? "Editar" : "Completar datos"}
+              </Button>
             </div>
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setIsEditDialogOpen(true)}
-            className="md:ml-auto"
-          >
-            <Edit className="h-4 w-4 mr-2" />
-            Editar Información
-          </Button>
-        </div>
+          );
+        })()}
 
         <Separator className="my-6" />
 

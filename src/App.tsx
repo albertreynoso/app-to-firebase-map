@@ -11,6 +11,9 @@ import Calendario from "./pages/Calendario";
 import Pagos from "./pages/Pagos";
 import NotFound from "./pages/NotFound";
 import PacienteDetalle from "./components/PatientDetail";
+import Login from "./pages/Login";
+import { AuthProvider } from "./context/AuthContext";
+import { ProtectedRoute } from "./components/ProtectedRoute";
 
 const queryClient = new QueryClient();
 
@@ -20,18 +23,54 @@ const App = () => (
       <Toaster />
       <Sonner />
       <BrowserRouter>
-        <Layout>
+        <AuthProvider>
           <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/empleados" element={<Empleados />} />
-            <Route path="/pacientes" element={<Pacientes />} />
-            <Route path="/pacientes/:id" element={<PacienteDetalle/>} />
-            <Route path="/calendario" element={<Calendario />} />
-            <Route path="/pagos" element={<Pagos />} />
-            {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+            <Route path="/login" element={<Login />} />
+            <Route path="/" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Dashboard />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/empleados" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Empleados />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/pacientes" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Pacientes />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/pacientes/:id" element={
+              <ProtectedRoute>
+                <Layout>
+                  <PacienteDetalle />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/calendario" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Calendario />
+                </Layout>
+              </ProtectedRoute>
+            } />
+            <Route path="/pagos" element={
+              <ProtectedRoute>
+                <Layout>
+                  <Pagos />
+                </Layout>
+              </ProtectedRoute>
+            } />
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </Layout>
+        </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>
   </QueryClientProvider>

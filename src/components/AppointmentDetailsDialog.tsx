@@ -21,6 +21,7 @@ import {
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { toast } from "@/hooks/use-toast";
+import { useAuthContext } from "@/context/AuthContext";
 import ConfirmationDialog from "@/components/ConfirmationDialog";
 import { updateAppointment, cancelAppointment } from "@/services/appointmentService";
 
@@ -78,6 +79,7 @@ interface AppointmentDetails {
   duration: string;
   status: string;
   date: Date;
+  notes?: string;
 }
 
 interface AppointmentDetailsDialogProps {
@@ -97,6 +99,7 @@ export default function AppointmentDetailsDialog({
   onReschedule,
   onSuccess,
 }: AppointmentDetailsDialogProps) {
+  const { user } = useAuthContext();
   const [selectedStatus, setSelectedStatus] = useState<string>("");
   const [updatingStatus, setUpdatingStatus] = useState(false);
   const [showCancelDialog, setShowCancelDialog] = useState(false);
@@ -117,7 +120,7 @@ export default function AppointmentDetailsDialog({
   const normalizeStatus = (status: string): string => {
     const statusMap: Record<string, string> = {
       'confirmed': 'confirmada',
-      'pending': 'pendiente', 
+      'pending': 'pendiente',
       'completed': 'completada',
       'cancelled': 'cancelada',
       'reprogramed': 'reprogramada',
@@ -147,7 +150,7 @@ export default function AppointmentDetailsDialog({
 
     try {
       setUpdatingStatus(true);
-      
+
       console.log("🔄 Cambiando estado de la cita:", {
         citaId: appointment.id,
         estadoAnterior: currentStatus,
@@ -156,12 +159,12 @@ export default function AppointmentDetailsDialog({
 
       await updateAppointment(appointment.id, {
         estado: newStatus as any,
-      });
+      }, user?.displayName || "Sistema");
 
       console.log("✅ Estado actualizado en Firebase exitosamente");
-      
+
       const statusLabel = APPOINTMENT_STATUS_CONFIG[newStatus as keyof typeof APPOINTMENT_STATUS_CONFIG]?.label || newStatus;
-      
+
       toast({
         title: "✅ Estado actualizado",
         description: `La cita ha sido marcada como ${statusLabel.toLowerCase()}.`,
@@ -169,7 +172,7 @@ export default function AppointmentDetailsDialog({
 
       // Cerrar el modal inmediatamente
       onOpenChange(false);
-      
+
       // Recargar el calendario
       if (onSuccess) {
         await onSuccess();
@@ -177,7 +180,7 @@ export default function AppointmentDetailsDialog({
 
     } catch (error: any) {
       console.error("❌ Error al actualizar estado:", error);
-      
+
       toast({
         title: "❌ Error",
         description: error.message || "No se pudo actualizar el estado de la cita.",
@@ -191,10 +194,10 @@ export default function AppointmentDetailsDialog({
   const handleConfirmCancellation = async () => {
     try {
       setUpdatingStatus(true);
-      
+
       await updateAppointment(appointment.id, {
         estado: "cancelada" as any,
-      });
+      }, user?.displayName || "Sistema");
 
       toast({
         title: "✅ Cita cancelada",
@@ -203,14 +206,14 @@ export default function AppointmentDetailsDialog({
 
       setShowCancelDialog(false);
       onOpenChange(false);
-      
+
       if (onSuccess) {
         await onSuccess();
       }
 
     } catch (error: any) {
       console.error("❌ Error al cancelar cita:", error);
-      
+
       toast({
         title: "❌ Error",
         description: "No se pudo cancelar la cita.",
@@ -224,9 +227,9 @@ export default function AppointmentDetailsDialog({
   const handleDeleteAppointment = async () => {
     try {
       setDeleting(true);
-      
+
       await cancelAppointment(appointment.id);
-      
+
       toast({
         title: "✅ Cita eliminada",
         description: "La cita ha sido eliminada exitosamente.",
@@ -266,26 +269,18 @@ export default function AppointmentDetailsDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <div className="flex items-center justify-between gap-4 pb-4 border-b-2" 
-                 style={{ borderColor: getBorderColor() }}>
+            <div className="flex items-center justify-between gap-4 pb-4 border-b-2"
+              style={{ borderColor: getBorderColor() }}>
               <DialogTitle className="text-xl font-semibold">
-                Detalles de la Cita
+                Detalle de cita
               </DialogTitle>
-              
+
               <div className="flex items-center gap-2">
                 <Badge className={`${statusConfig.color} text-white pointer-events-none`}>
                   {statusConfig.label}
                 </Badge>
-                
-                <button
-                  onClick={() => onOpenChange(false)}
-                  className="rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground"
-                >
-                  <XCircle className="h-5 w-5" />
-                  <span className="sr-only">Cerrar</span>
-                </button>
               </div>
             </div>
           </DialogHeader>
@@ -353,6 +348,18 @@ export default function AppointmentDetailsDialog({
                   </div>
                 </div>
               </div>
+
+              {/* Notas y Observaciones */}
+              {appointment.notes && (
+                <div className="p-3 flex gap-3 border rounded-lg">
+                  <FileText className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">NOTAS Y OBSERVACIONES</p>
+                    {/* <div className="text-sm whitespace-pre-wrap">{appointment.notes}</div> */}
+                    <p className="text-sm whitespace-pre-wrap font-semibold">{appointment.notes}</p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Selector de Estado - SOLO SI NO ESTÁ REPROGRAMADA */}
@@ -361,33 +368,15 @@ export default function AppointmentDetailsDialog({
                 <label className="text-xs font-medium text-muted-foreground uppercase">
                   Cambiar Estado
                 </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {/* Pendiente */}
-                  <button
-                    onClick={() => handleStatusChange("pendiente")}
-                    disabled={updatingStatus}
-                    className={`
-                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
-                      ${currentStatus === "pendiente" 
-                        ? "bg-yellow-500/10 border-yellow-500" 
-                        : "bg-gray-100 border-gray-300 hover:border-gray-400"
-                      }
-                    `}
-                  >
-                    <span className="h-2 w-2 rounded-full bg-yellow-500" />
-                    <span className="text-sm font-medium text-yellow-600">
-                      Pendiente
-                    </span>
-                  </button>
-
+                <div className="grid grid-cols-2 gap-3">
                   {/* Confirmada */}
                   <button
                     onClick={() => handleStatusChange("confirmada")}
                     disabled={updatingStatus}
                     className={`
-                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
-                      ${currentStatus === "confirmada" 
-                        ? "bg-green-500/10 border-green-500" 
+                      flex items-center justify-center gap-2 px-4 py-3 rounded-md border transition-all
+                      ${currentStatus === "confirmada"
+                        ? "bg-green-500/10 border-green-500"
                         : "bg-gray-100 border-gray-300 hover:border-gray-400"
                       }
                     `}
@@ -403,9 +392,9 @@ export default function AppointmentDetailsDialog({
                     onClick={() => handleStatusChange("cancelada")}
                     disabled={updatingStatus}
                     className={`
-                      flex items-center justify-center gap-2 px-3 py-2 rounded-md border transition-all
-                      ${currentStatus === "cancelada" 
-                        ? "bg-red-500/10 border-red-500" 
+                      flex items-center justify-center gap-2 px-4 py-3 rounded-md border transition-all
+                      ${currentStatus === "cancelada"
+                        ? "bg-red-500/10 border-red-500"
                         : "bg-gray-100 border-gray-300 hover:border-gray-400"
                       }
                     `}

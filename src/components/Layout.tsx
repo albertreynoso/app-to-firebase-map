@@ -1,16 +1,18 @@
 import { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { 
-  LayoutDashboard, 
-  Users, 
-  UserCircle, 
-  Calendar, 
+import {
+  LayoutDashboard,
+  Users,
+  UserCircle,
+  Calendar,
   CreditCard,
   Menu,
-  X
+  X,
+  LogOut
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useState } from "react";
+import { useAuthContext } from "@/context/AuthContext";
 
 interface LayoutProps {
   children: ReactNode;
@@ -27,6 +29,7 @@ const menuItems = [
 export function Layout({ children }: LayoutProps) {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const { signOut, user } = useAuthContext();
 
   return (
     <div className="min-h-screen bg-background">
@@ -64,29 +67,50 @@ export function Layout({ children }: LayoutProps) {
           </h2>
         </div>
 
-        <nav className="px-3 space-y-1">
-          {menuItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                onClick={() => setSidebarOpen(false)}
-                className={`
-                  flex items-center gap-3 px-3 py-3 rounded-lg transition-all
-                  ${
-                    isActive
-                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                      : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
-                  }
-                `}
-              >
-                <Icon className="h-5 w-5" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
+        <nav className="px-3 space-y-1 flex flex-col h-[calc(100vh-120px)]">
+          <div className="flex-1">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setSidebarOpen(false)}
+                  className={`
+                    flex items-center gap-3 px-3 py-3 rounded-lg transition-all
+                    ${
+                      isActive
+                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                    }
+                  `}
+                >
+                  <Icon className="h-5 w-5" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+
+          {/* Botón de cerrar sesión */}
+          <div className="border-t border-sidebar-border pt-3 pb-3">
+            {user && (
+              <div className="px-3 py-2 mb-2">
+                <p className="text-xs text-sidebar-foreground/60 truncate">
+                  {user.email}
+                </p>
+              </div>
+            )}
+            <button
+              onClick={() => signOut()}
+              className="flex items-center gap-3 px-3 py-3 rounded-lg transition-all w-full
+                text-sidebar-foreground/80 hover:bg-red-500/10 hover:text-red-500"
+            >
+              <LogOut className="h-5 w-5" />
+              <span>Cerrar sesión</span>
+            </button>
+          </div>
         </nav>
       </aside>
 

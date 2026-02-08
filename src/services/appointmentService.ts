@@ -1,16 +1,17 @@
 // src/services/appointmentService.ts
-import { 
-  collection, 
-  addDoc, 
-  doc, 
-  getDoc, 
-  getDocs, 
+import {
+  collection,
+  addDoc,
+  doc,
+  getDoc,
+  getDocs,
   updateDoc,
   deleteDoc,
-  query, 
+  query,
   where,
   Timestamp,
-  serverTimestamp
+  serverTimestamp,
+  arrayUnion
 } from "firebase/firestore";
 import { db } from "@/lib/firebase";
 import { Patient, Appointment } from "@/types/appointment";
@@ -179,35 +180,62 @@ export const getPatientById = async (patientId: string): Promise<Patient | null>
  * Crear una nueva cita en Firebase
  */
 export const createAppointment = async (
-  appointmentData: Omit<Appointment, "id" | "fecha_creacion">
+  appointmentData: Omit<Appointment, "id" | "fecha_creacion">,
+  realizadoPor?: string
 ): Promise<string> => {
   try {
     console.log("📝 Intentando crear cita con datos:", appointmentData);
 
-    const appointmentForFirebase = {
+    const appointmentForFirebase: any = {
+      // Información básica
       fecha: Timestamp.fromDate(appointmentData.fecha),
       hora: appointmentData.hora,
+      fecha_creacion: serverTimestamp(),
+
+      // Información del paciente
       paciente_id: appointmentData.paciente_id,
       paciente_nombre: appointmentData.paciente_nombre,
+
+      // Tipo de cita (IMPORTANTE)
+      es_tratamiento: appointmentData.es_tratamiento,
       tipo_consulta: appointmentData.tipo_consulta,
+
+      // Duración y tiempo
       duracion: appointmentData.duracion,
-      costo: appointmentData.costo || 0,
-      pagado: appointmentData.pagado || false, 
-      notas_observaciones: appointmentData.notas_observaciones || "",
-      estado: appointmentData.estado,
-      fecha_creacion: serverTimestamp(),
-      
-      // Nuevos campos opcionales
-      atendido_por: appointmentData.atendido_por || "",
       duracion_real: appointmentData.duracion_real || "",
       hora_inicio_atencion: appointmentData.hora_inicio_atencion || "",
       hora_fin_atencion: appointmentData.hora_fin_atencion || "",
+
+      // Personal
+      atendido_por: appointmentData.atendido_por || "",
+
+      // Estado y pago
+      estado: appointmentData.estado,
+      costo: appointmentData.costo || 0,
+      pagado: appointmentData.pagado || false,
+
+      // Notas
+      notas_observaciones: appointmentData.notas_observaciones || "",
+
+      // Historial de estados
+      historial_estados: [{
+        estado: appointmentData.estado,
+        fecha: Timestamp.now(),
+        realizado_por: realizadoPor || "Sistema",
+        tipo: "creacion",
+      }],
     };
+
+    // Agregar campos de tratamiento solo si es cita de tratamiento
+    if (appointmentData.es_tratamiento && appointmentData.tratamiento_id) {
+      appointmentForFirebase.tratamiento_id = appointmentData.tratamiento_id;
+      appointmentForFirebase.tratamiento_nombre = appointmentData.tratamiento_nombre || "";
+    }
 
     console.log("🔄 Datos preparados para Firebase:", appointmentForFirebase);
 
     const docRef = await addDoc(collection(db, "citas"), appointmentForFirebase);
-    
+
     console.log("✅ Cita creada exitosamente con ID:", docRef.id);
     return docRef.id;
   } catch (error: any) {
@@ -223,32 +251,54 @@ export const createAppointment = async (
  */
 export const updateAppointment = async (
   appointmentId: string,
-  updates: Partial<Appointment>
+  updates: Partial<Appointment>,
+  realizadoPor?: string
 ): Promise<void> => {
   try {
     console.log("📝 Actualizando cita:", appointmentId, updates);
 
     const appointmentRef = doc(db, "citas", appointmentId);
-    
+
     // Preparar datos para actualización
     const updateData: any = {};
-    
+
     if (updates.fecha) {
       updateData.fecha = Timestamp.fromDate(updates.fecha);
     }
     if (updates.hora !== undefined) updateData.hora = updates.hora;
+    if (updates.paciente_nombre !== undefined) updateData.paciente_nombre = updates.paciente_nombre;
+    if (updates.es_tratamiento !== undefined) updateData.es_tratamiento = updates.es_tratamiento;
     if (updates.tipo_consulta !== undefined) updateData.tipo_consulta = updates.tipo_consulta;
+    if (updates.tratamiento_id !== undefined) updateData.tratamiento_id = updates.tratamiento_id;
+    if (updates.tratamiento_nombre !== undefined) updateData.tratamiento_nombre = updates.tratamiento_nombre;
     if (updates.duracion !== undefined) updateData.duracion = updates.duracion;
-    if (updates.pagado !== undefined) updateData.pagado = updates.pagado;
-    if (updates.estado !== undefined) updateData.estado = updates.estado;
-    if (updates.notas_observaciones !== undefined) updateData.notas_observaciones = updates.notas_observaciones;
-    if (updates.atendido_por !== undefined) updateData.atendido_por = updates.atendido_por;
     if (updates.duracion_real !== undefined) updateData.duracion_real = updates.duracion_real;
     if (updates.hora_inicio_atencion !== undefined) updateData.hora_inicio_atencion = updates.hora_inicio_atencion;
     if (updates.hora_fin_atencion !== undefined) updateData.hora_fin_atencion = updates.hora_fin_atencion;
+    if (updates.atendido_por !== undefined) updateData.atendido_por = updates.atendido_por;
+    if (updates.estado !== undefined) updateData.estado = updates.estado;
+    if (updates.costo !== undefined) updateData.costo = updates.costo;
+    if (updates.pagado !== undefined) updateData.pagado = updates.pagado;
+    if (updates.notas_observaciones !== undefined) updateData.notas_observaciones = updates.notas_observaciones;
+
+    // Registrar cambio de estado en historial (solo si el estado es diferente al último)
+    if (updates.estado !== undefined) {
+      const docSnap = await getDoc(appointmentRef);
+      const existingHistorial: any[] = docSnap.data()?.historial_estados || [];
+      const lastEntry = existingHistorial[existingHistorial.length - 1];
+
+      if (!lastEntry || lastEntry.estado !== updates.estado) {
+        updateData.historial_estados = arrayUnion({
+          estado: updates.estado,
+          fecha: Timestamp.now(),
+          realizado_por: realizadoPor || "Sistema",
+          tipo: "cambio_estado",
+        });
+      }
+    }
 
     await updateDoc(appointmentRef, updateData);
-    
+
     console.log("✅ Cita actualizada exitosamente");
   } catch (error: any) {
     console.error("❌ Error al actualizar cita:", error);
