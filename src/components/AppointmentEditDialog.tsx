@@ -400,12 +400,40 @@ export default function AppointmentEditDialog({
                             name="notes"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel className="text-sm">Notas y Observaciones</FormLabel>
+                                    <FormLabel>Notas y Observaciones</FormLabel>
                                     <FormControl>
                                         <Textarea
-                                            placeholder="Escribe aquí cualquier información adicional..."
-                                            className="min-h-[80px] resize-none"
-                                            {...field}
+                                            placeholder="Escribe aquí cualquier información adicional sobre la cita"
+                                            className="min-h-[100px] resize-none"
+                                            value={field.value}
+                                            onChange={(e) => {
+                                                const text = e.target.value;
+                                                const lines = text.split('\n');
+                                                const processedLines = lines.map(line => {
+                                                    const trimmedLine = line.trim();
+                                                    // Si la línea no está vacía y no empieza con viñeta, agregar viñeta
+                                                    if (trimmedLine && !trimmedLine.startsWith('•')) {
+                                                        return '• ' + trimmedLine.replace(/^[•\-\*]\s*/, '');
+                                                    }
+                                                    return line;
+                                                });
+                                                field.onChange(processedLines.join('\n'));
+                                            }}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    e.preventDefault();
+                                                    const textarea = e.currentTarget;
+                                                    const cursorPosition = textarea.selectionStart;
+                                                    const textBefore = field.value.substring(0, cursorPosition);
+                                                    const textAfter = field.value.substring(cursorPosition);
+                                                    field.onChange(textBefore + '\n• ' + textAfter);
+
+                                                    // Mover el cursor después de la viñeta
+                                                    setTimeout(() => {
+                                                        textarea.selectionStart = textarea.selectionEnd = cursorPosition + 3;
+                                                    }, 0);
+                                                }
+                                            }}
                                         />
                                     </FormControl>
                                     <FormMessage />

@@ -36,6 +36,8 @@ interface Appointment {
   notas_observaciones?: string;
   paciente_nombre?: string;
   historial_estados?: EstadoHistorial[];
+  es_tratamiento?: boolean;
+  tratamiento_nombre?: string;
 }
 
 interface Pago {
@@ -217,7 +219,7 @@ export default function MovimientosRecientes({
 
         return (
           <div key={monthKey}>
-            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 capitalize">
+            <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3">
               {monthLabel}
             </h3>
             <div className="space-y-3">
@@ -319,7 +321,9 @@ function CitaMovimiento({ cita, fecha }: { cita: Appointment; fecha: Date }) {
         <div className="w-1/3 flex justify-start">
           <div>
             <p className="font-semibold text-sm text-foreground">
-              {cita.tipo_consulta}
+              {cita.es_tratamiento
+                ? `Cita de tratamiento: ${cita.tratamiento_nombre || "Sin nombre"}`
+                : cita.tipo_consulta}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {fecha.toLocaleDateString("es-PE", {
@@ -343,19 +347,19 @@ function CitaMovimiento({ cita, fecha }: { cita: Appointment; fecha: Date }) {
                 </div>
               )}
 
-            {/* Costo si aplica */}
-            {cita.costo && cita.costo > 0 && (
+            {/* Costo si aplica (solo para consultas, no tratamientos) */}
+            {!cita.es_tratamiento && cita.costo && cita.costo > 0 && (
               <div className="flex items-center gap-1.5 mt-1.5">
                 <DollarSign className="h-3 w-3 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground">
                   {formatCurrency(cita.costo)}
                   {cita.pagado ? (
                     <span className="text-emerald-600 font-medium ml-1">· Pagado</span>
-                  ) : (
+                  ) : ["confirmada", "completada"].includes(cita.estado?.toLowerCase()) ? (
                     <span className="font-medium ml-1" style={{ color: "rgb(245, 158, 11)" }}>
                       · Pendiente de pago
                     </span>
-                  )}
+                  ) : null}
                 </span>
               </div>
             )}

@@ -154,10 +154,12 @@ export default function PaymentDialog({
       );
       const consultasSnapshot = await getDocs(qConsultas);
       
+      const estadosCobrables = ["confirmada", "completada"];
       const consultasData: Consulta[] = [];
       consultasSnapshot.forEach((doc) => {
         const data = doc.data();
-        if (data.costo && data.costo > 0) {
+        const estado = (data.estado || "").toLowerCase();
+        if (data.costo && data.costo > 0 && estadosCobrables.includes(estado)) {
           consultasData.push({
             id: doc.id,
             tipo_consulta: data.tipo_consulta || "",

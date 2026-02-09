@@ -991,7 +991,7 @@ export default function AppointmentDialog({
                                     <FormLabel>Notas y Observaciones</FormLabel>
                                     <FormControl>
                                         <Textarea
-                                            placeholder="Escribe aquí cualquier información adicional sobre la cita...&#10;• Cada línea separada por Enter tendrá una viñeta automáticamente"
+                                            placeholder="Escribe aquí cualquier información adicional sobre la cita"
                                             className="min-h-[100px] resize-none"
                                             value={field.value}
                                             onChange={(e) => {

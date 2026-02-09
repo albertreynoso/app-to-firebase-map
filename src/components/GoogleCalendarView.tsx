@@ -303,7 +303,7 @@ export default function GoogleCalendarView({
       <div ref={scrollContainerRef} className="flex-1 min-h-0 overflow-auto">
         <div className="min-w-[800px] relative">
           {/* Encabezado de días */}
-          <div className="grid grid-cols-[80px_repeat(7,1fr)] border-b bg-card sticky top-0 z-[60]">
+          <div className="grid grid-cols-[80px_repeat(7,1fr)] border-b bg-card sticky top-0 z-[50]">
             <div className="p-3 border-r" />
             {weekDays.map((day, index) => {
               const dayName = format(day, "EEE", { locale: es }).toUpperCase();

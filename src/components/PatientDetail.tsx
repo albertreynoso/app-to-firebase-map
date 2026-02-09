@@ -25,7 +25,14 @@ import {
   Home,
   Stethoscope,
   Trash2,
+  Eye,
 } from "lucide-react";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import EditPatientDialog from "./PatientDetailEdit";
 import { toast } from "@/hooks/use-toast";
 import { doc, getDoc, collection, query, where, getDocs, updateDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
@@ -90,7 +97,7 @@ export default function PacienteDetalle() {
   const [treatments, setTreatments] = useState<Treatment[]>([]);
   const [loadingTreatments, setLoadingTreatments] = useState(true);
   const [isTreatmentDialogOpen, setIsTreatmentDialogOpen] = useState(false);
-  const [viewMode, setViewMode] = useState<"consultas" | "tratamientos">("consultas");
+  const [viewMode, setViewMode] = useState<"tratamientos" | "consultas">("tratamientos");
   //Estados de pago
   const [pagos, setPagos] = useState<Pago[]>([]);
   const [loadingPagos, setLoadingPagos] = useState(true);
@@ -106,6 +113,9 @@ export default function PacienteDetalle() {
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
   const [selectedPaymentType, setSelectedPaymentType] = useState<"consulta" | "tratamiento" | undefined>(undefined);
   const [selectedPaymentReferenceId, setSelectedPaymentReferenceId] = useState<string | undefined>(undefined);
+
+  const [isCitaDetailOpen, setIsCitaDetailOpen] = useState(false);
+  const [selectedCitaDetail, setSelectedCitaDetail] = useState<any | null>(null);
 
   const calculateAge = (fechaNacimiento: Date | undefined): number | null => {
     if (!fechaNacimiento) return null;
@@ -393,8 +403,9 @@ export default function PacienteDetalle() {
   }
 
   const FinancialTab = () => {
-    // Filtrar consultas no pagadas
-    const consultasPendientes = appointments.filter(apt => !apt.pagado && apt.costo > 0);
+    // Filtrar consultas no pagadas (solo confirmadas o completadas son cobrables)
+    const estadosCobrables = ["confirmada", "completada"];
+    const consultasPendientes = appointments.filter(apt => !apt.pagado && apt.costo > 0 && estadosCobrables.includes(apt.estado?.toLowerCase()));
 
     // Filtrar tratamientos no pagados completamente
     const tratamientosPendientes = treatments.filter(t => !t.pagado && t.total_presupuesto > 0);
@@ -682,19 +693,20 @@ export default function PacienteDetalle() {
       <div className="space-y-6">
         <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
           <div className="flex gap-2">
-            <Button
-              variant={viewMode === "consultas" ? "default" : "outline"}
-              onClick={() => setViewMode("consultas")}
-            >
-              <Calendar className="h-4 w-4 mr-2" />
-              Consultas ({consultas.length})
-            </Button>
+            
             <Button
               variant={viewMode === "tratamientos" ? "default" : "outline"}
               onClick={() => setViewMode("tratamientos")}
             >
               <Stethoscope className="h-4 w-4 mr-2" />
               Tratamientos ({treatments.length})
+            </Button>
+            <Button
+              variant={viewMode === "consultas" ? "default" : "outline"}
+              onClick={() => setViewMode("consultas")}
+            >
+              <Calendar className="h-4 w-4 mr-2" />
+              Consultas ({consultas.length})
             </Button>
           </div>
           <Button size="sm" onClick={() => setIsTreatmentDialogOpen(true)}>
@@ -905,26 +917,69 @@ export default function PacienteDetalle() {
                           {treatment.diagnostico}
                         </p>
                       </div>
+                      <div>
+                        <h4 className="text-sm font-semibold text-muted-foreground mb-3">
+                          Citas
+                        </h4>
+                        {(() => {
+                          const citasDelTratamiento = (treatment.citas || [])
+                            .map((citaId: string) => appointments.find(apt => apt.id === citaId))
+                            .filter(Boolean);
 
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                        <div className="bg-muted/30 p-4 rounded-lg">
-                          <p className="text-xs text-muted-foreground mb-1">Citas Planificadas</p>
-                          <p className="text-2xl font-bold text-foreground">
-                            {treatment.cantidad_citas_planificadas}
-                          </p>
-                        </div>
-                        <div className="bg-muted/30 p-4 rounded-lg">
-                          <p className="text-xs text-muted-foreground mb-1">Citas Realizadas</p>
-                          <p className="text-2xl font-bold text-green-600">
-                            {treatment.citas?.length || 0}
-                          </p>
-                        </div>
-                        <div className="bg-muted/30 p-4 rounded-lg">
-                          <p className="text-xs text-muted-foreground mb-1">Pendientes</p>
-                          <p className="text-2xl font-bold text-yellow-600">
-                            {treatment.cantidad_citas_planificadas - (treatment.citas?.length || 0)}
-                          </p>
-                        </div>
+                          if (citasDelTratamiento.length === 0) {
+                            return (
+                              <p className="text-sm text-muted-foreground italic">
+                                No hay citas registradas para este tratamiento
+                              </p>
+                            );
+                          }
+
+                          return (
+                            <div className="border rounded-lg overflow-hidden">
+                              <div className="bg-muted/50 px-4 py-2 grid grid-cols-12 gap-2 text-xs font-medium text-muted-foreground">
+                                <div className="col-span-1">N° Cita</div>
+                                <div className="col-span-3">Fecha</div>
+                                <div className="col-span-2">Hora</div>
+                                <div className="col-span-2">Atendido por</div>
+                                <div className="col-span-2">Duración</div>
+                                <div className="col-span-2 text-right">Detalle</div>
+                              </div>
+                              {citasDelTratamiento.map((cita: any, idx: number) => {
+                                const fechaCita = cita.fecha instanceof Date ? cita.fecha : new Date(cita.fecha);
+                                return (
+                                  <div key={cita.id} className="px-4 py-3 grid grid-cols-12 gap-2 border-t items-center">
+                                    <div className="col-span-1 font-medium text-sm">{idx + 1}</div>
+                                    <div className="col-span-3 text-sm font-medium">
+                                      {fechaCita.toLocaleDateString('es-PE', {
+                                        day: '2-digit',
+                                        month: 'short',
+                                        year: 'numeric',
+                                      })}
+                                    </div>
+                                    <div className="col-span-2 text-sm font-medium">{cita.hora}</div>
+                                    <div className="col-span-2 text-sm text-muted-foreground">
+                                      {cita.atendido_por || "—"}
+                                    </div>
+                                    <div className="col-span-2 text-sm">{cita.duracion ? `${cita.duracion} min` : "—"}</div>
+                                    <div className="col-span-2 text-right">
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => {
+                                          setSelectedCitaDetail(cita);
+                                          setIsCitaDetailOpen(true);
+                                        }}
+                                      >
+                                        <Eye className="h-4 w-4 mr-1" />
+                                        Detalle
+                                      </Button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
 
                       <div>
@@ -1008,47 +1063,6 @@ export default function PacienteDetalle() {
                         </Button>
                       </div>
 
-                      {treatment.citas && treatment.citas.length > 0 && (
-                        <div>
-                          <h4 className="text-sm font-semibold text-muted-foreground mb-3">
-                            Citas Relacionadas ({treatment.citas.length})
-                          </h4>
-                          <div className="space-y-2">
-                            {treatment.citas.map((citaId, idx) => {
-                              const cita = appointments.find(apt => apt.id === citaId);
-                              if (!cita) return null;
-
-                              return (
-                                <div
-                                  key={citaId}
-                                  className="bg-muted/30 p-3 rounded-lg flex items-center justify-between"
-                                >
-                                  <div className="flex items-center gap-3">
-                                    <div className="bg-primary/10 rounded px-2 py-1">
-                                      <span className="text-xs font-medium text-primary">
-                                        Cita {idx + 1}
-                                      </span>
-                                    </div>
-                                    <div>
-                                      <p className="text-sm font-medium">
-                                        {new Date(cita.fecha).toLocaleDateString('es-PE', {
-                                          year: 'numeric',
-                                          month: 'long',
-                                          day: 'numeric'
-                                        })}
-                                      </p>
-                                      <p className="text-xs text-muted-foreground">
-                                        {cita.hora} • {cita.tipo_consulta}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  {getStatusBadge(cita.estado)}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
                     </CardContent>
                   </Card>
                 ))}
@@ -1326,11 +1340,15 @@ export default function PacienteDetalle() {
                       <div>
                         <p className="text-xs text-muted-foreground">Dirección</p>
                         <p className="text-sm font-medium">{patient.direccion}</p>
-                        {patient.distrito_direccion && (
-                          <p className="text-sm text-muted-foreground mt-1">
-                            {patient.distrito_direccion}
-                          </p>
-                        )}
+                      </div>
+                    </div>
+                  )}
+                  {patient.distrito_direccion && (
+                    <div className="flex items-start gap-3">
+                      <Home className="h-5 w-5 text-muted-foreground mt-0.5" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Distrito</p>
+                        <p className="text-sm font-medium">{patient.distrito_direccion}</p>
                       </div>
                     </div>
                   )}
@@ -1511,6 +1529,103 @@ export default function PacienteDetalle() {
         preselectedType={selectedPaymentType}
         preselectedReferenceId={selectedPaymentReferenceId}
       />
+
+      {/* Modal de detalle de cita de tratamiento */}
+      <Dialog open={isCitaDetailOpen} onOpenChange={setIsCitaDetailOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Detalle de Cita</DialogTitle>
+          </DialogHeader>
+          {selectedCitaDetail && (() => {
+            const cita = selectedCitaDetail;
+            const fechaCita = cita.fecha instanceof Date ? cita.fecha : new Date(cita.fecha);
+            return (
+              <div className="space-y-4 py-2">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
+                    <Calendar className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Fecha</p>
+                      <p className="text-sm font-semibold">
+                        {fechaCita.toLocaleDateString('es-PE', {
+                          weekday: 'long',
+                          day: '2-digit',
+                          month: 'long',
+                          year: 'numeric',
+                        })}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 p-3 border rounded-lg bg-muted/30">
+                    <Clock className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Hora</p>
+                      <p className="text-sm font-semibold">{cita.hora}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="flex items-center gap-3 p-3 border rounded-lg">
+                    <User className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Atendido por</p>
+                      <p className="text-sm font-semibold">{cita.atendido_por || "No registrado"}</p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 p-3 border rounded-lg">
+                    <Clock className="h-4 w-4 text-primary" />
+                    <div>
+                      <p className="text-xs text-muted-foreground">Duración estimada</p>
+                      <p className="text-sm font-semibold">{cita.duracion ? `${cita.duracion} min` : "No registrado"}</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-3 p-3 border rounded-lg">
+                  <Activity className="h-4 w-4 text-primary" />
+                  <div>
+                    <p className="text-xs text-muted-foreground">Estado</p>
+                    <div className="mt-1">{getStatusBadge(cita.estado)}</div>
+                  </div>
+                </div>
+
+                {(cita.hora_inicio_atencion || cita.duracion_real) && (
+                  <div className="grid grid-cols-2 gap-3">
+                    {cita.hora_inicio_atencion && (
+                      <div className="p-3 border rounded-lg">
+                        <p className="text-xs text-muted-foreground">Horario de atención</p>
+                        <p className="text-sm font-semibold">
+                          {cita.hora_inicio_atencion}
+                          {cita.hora_fin_atencion && ` - ${cita.hora_fin_atencion}`}
+                        </p>
+                      </div>
+                    )}
+                    {cita.duracion_real && (
+                      <div className="p-3 border rounded-lg">
+                        <p className="text-xs text-muted-foreground">Duración real</p>
+                        <p className="text-sm font-semibold">{cita.duracion_real} min</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {cita.notas_observaciones && (
+                  <div className="p-3 border rounded-lg">
+                    <div className="flex items-start gap-2">
+                      <FileText className="h-4 w-4 text-primary mt-0.5" />
+                      <div>
+                        <p className="text-xs text-muted-foreground">Notas y observaciones</p>
+                        <p className="text-sm mt-1 whitespace-pre-wrap">{cita.notas_observaciones}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
